@@ -1,0 +1,4 @@
+lib/libLLVM.so.* filter=lfs diff=lfs merge=lfs -text
+lib/librustc_driver-*.so filter=lfs diff=lfs merge=lfs -text
+lib/rustlib/*/lib/libLLVM.so.* filter=lfs diff=lfs merge=lfs -text
+lib/rustlib/*/lib/libcore-*.rmeta filter=lfs diff=lfs merge=lfs -text

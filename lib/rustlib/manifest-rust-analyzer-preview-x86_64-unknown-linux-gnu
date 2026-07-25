@@ -1,0 +1,4 @@
+file:bin/rust-analyzer
+file:share/doc/rust-analyzer/LICENSE-APACHE
+file:share/doc/rust-analyzer/LICENSE-MIT
+file:share/doc/rust-analyzer/README.md

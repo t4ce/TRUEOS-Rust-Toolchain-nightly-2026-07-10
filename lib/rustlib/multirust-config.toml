@@ -1,0 +1,33 @@
+config_version = "1"
+
+[[components]]
+pkg = "clippy-preview"
+target = "x86_64-unknown-linux-gnu"
+
+[[components]]
+pkg = "llvm-tools-preview"
+target = "x86_64-unknown-linux-gnu"
+
+[[components]]
+pkg = "rust-analyzer-preview"
+target = "x86_64-unknown-linux-gnu"
+
+[[components]]
+pkg = "rust-src"
+target = "*"
+
+[[components]]
+pkg = "rustfmt-preview"
+target = "x86_64-unknown-linux-gnu"
+
+[[components]]
+pkg = "cargo"
+target = "x86_64-unknown-linux-gnu"
+
+[[components]]
+pkg = "rust-std"
+target = "x86_64-unknown-linux-gnu"
+
+[[components]]
+pkg = "rustc"
+target = "x86_64-unknown-linux-gnu"
