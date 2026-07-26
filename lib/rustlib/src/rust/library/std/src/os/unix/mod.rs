@@ -65,7 +65,7 @@ mod platform {
     pub use crate::os::illumos::*;
     #[cfg(target_os = "l4re")]
     pub use crate::os::l4re::*;
-    #[cfg(target_os = "linux")]
+    #[cfg(any(target_os = "linux", target_os = "trueos"))]
     pub use crate::os::linux::*;
     #[cfg(target_os = "netbsd")]
     pub use crate::os::netbsd::*;

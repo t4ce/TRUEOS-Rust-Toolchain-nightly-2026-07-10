@@ -121,6 +121,12 @@ impl Thread {
                 let _handler = sys::stack_overflow::Handler::new();
 
                 rust_start();
+
+                #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+                {
+                    // TRUEOS service-lane pthread shim has no native TLS destructor.
+                    crate::rt::thread_cleanup();
+                }
             }
             ptr::null_mut()
         }
@@ -532,6 +538,10 @@ pub fn set_name(name: &CStr) {
     let res = unsafe { libc::taskNameSet(libc::taskIdSelf(), name.as_mut_ptr()) };
     debug_assert_eq!(res, libc::OK);
 }
+
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+pub fn set_name(_name: &core::ffi::CStr) {}
 
 #[cfg(not(target_os = "espidf"))]
 pub fn sleep(dur: Duration) {

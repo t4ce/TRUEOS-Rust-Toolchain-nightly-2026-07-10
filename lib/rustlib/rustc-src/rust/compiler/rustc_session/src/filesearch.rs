@@ -57,7 +57,7 @@ pub fn make_target_bin_path(sysroot: &Path, target_triple: &str) -> PathBuf {
     sysroot.join(rustlib_path).join("bin")
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(target_os = "trueos")))]
 fn current_dll_path() -> Result<PathBuf, String> {
     use std::sync::OnceLock;
 
@@ -186,6 +186,15 @@ fn current_dll_path() -> Result<PathBuf, String> {
 
 /// This function checks if sysroot is found using env::args().next(), and if it
 /// is not found, finds sysroot from current rustc_driver dll.
+#[cfg(target_os = "trueos")]
+pub(crate) fn default_sysroot() -> PathBuf {
+    // Native compiler Blueprints materialize their compiler-facing standard
+    // library contract at this stable app-local path. There is no dynamic
+    // loader whose containing object could be discovered with `dladdr`.
+    PathBuf::from("rustc-sysroot")
+}
+
+#[cfg(not(target_os = "trueos"))]
 pub(crate) fn default_sysroot() -> PathBuf {
     fn default_from_rustc_driver_dll() -> Result<PathBuf, String> {
         let dll = current_dll_path()?;

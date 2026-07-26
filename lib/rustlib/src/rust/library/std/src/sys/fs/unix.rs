@@ -45,6 +45,7 @@ use libc::readdir as readdir64;
     target_os = "illumos",
     target_os = "l4re",
     target_os = "linux",
+    target_os = "trueos",
     target_os = "nto",
     target_os = "qnx",
     target_os = "redox",
@@ -259,21 +260,32 @@ cfg_has_statx! {{
 
 // all DirEntry's will have a reference to this struct
 struct InnerReadDir {
+    #[cfg(not(target_os = "trueos"))]
     dirp: DirStream,
     root: PathBuf,
+    #[cfg(target_os = "trueos")]
+    entries: Vec<crate::ffi::CString>,
 }
 
 pub struct ReadDir {
     inner: Arc<InnerReadDir>,
     end_of_stream: bool,
+    #[cfg(target_os = "trueos")]
+    next_index: usize,
 }
 
 impl ReadDir {
     fn new(inner: InnerReadDir) -> Self {
-        Self { inner: Arc::new(inner), end_of_stream: false }
+        Self {
+            inner: Arc::new(inner),
+            end_of_stream: false,
+            #[cfg(target_os = "trueos")]
+            next_index: 0,
+        }
     }
 }
 
+#[cfg(not(target_os = "trueos"))]
 struct DirStream(*mut libc::DIR);
 
 // dir::Dir requires openat support
@@ -412,6 +424,7 @@ fn get_path_from_fd(fd: c_int) -> Option<PathBuf> {
     target_os = "hurd",
     target_os = "illumos",
     target_os = "linux",
+    target_os = "trueos",
     target_os = "nto",
     target_os = "qnx",
     target_os = "redox",
@@ -439,6 +452,7 @@ pub struct DirEntry {
     target_os = "hurd",
     target_os = "illumos",
     target_os = "linux",
+    target_os = "trueos",
     target_os = "nto",
     target_os = "qnx",
     target_os = "redox",
@@ -467,6 +481,7 @@ struct dirent64_min {
     target_os = "hurd",
     target_os = "illumos",
     target_os = "linux",
+    target_os = "trueos",
     target_os = "nto",
     target_os = "qnx",
     target_os = "redox",
@@ -858,6 +873,30 @@ impl fmt::Debug for ReadDir {
 impl Iterator for ReadDir {
     type Item = io::Result<DirEntry>;
 
+    #[cfg(target_os = "trueos")]
+    fn next(&mut self) -> Option<io::Result<DirEntry>> {
+        let name = match self.inner.entries.get(self.next_index) {
+            Some(name) => name.clone(),
+            None => {
+                self.end_of_stream = true;
+                return None;
+            }
+        };
+        self.next_index += 1;
+
+        Some(Ok(DirEntry {
+            entry: dirent64_min {
+                d_ino: self.next_index as u64,
+                // TRUEOSFS currently exposes names through its listing ABI, not
+                // per-entry kinds. `DT_UNKNOWN` deliberately sends callers that
+                // need the kind through the working `stat` facade.
+                d_type: libc::DT_UNKNOWN,
+            },
+            name,
+            dir: Arc::clone(&self.inner),
+        }))
+    }
+
     #[cfg(any(
         target_os = "aix",
         target_os = "android",
@@ -966,6 +1005,7 @@ impl Iterator for ReadDir {
         target_os = "hurd",
         target_os = "illumos",
         target_os = "linux",
+        target_os = "trueos",
         target_os = "nto",
         target_os = "qnx",
         target_os = "redox",
@@ -1024,6 +1064,7 @@ pub(crate) fn debug_assert_fd_is_open(fd: RawFd) {
     }
 }
 
+#[cfg(not(target_os = "trueos"))]
 impl Drop for DirStream {
     fn drop(&mut self) {
         // dirfd isn't supported everywhere
@@ -1055,7 +1096,9 @@ impl Drop for DirStream {
 
 // SAFETY: `int dirfd (DIR *dirstream)` is MT-safe, implying that the pointer
 // may be safely sent among threads.
+#[cfg(not(target_os = "trueos"))]
 unsafe impl Send for DirStream {}
+#[cfg(not(target_os = "trueos"))]
 unsafe impl Sync for DirStream {}
 
 impl DirEntry {
@@ -1164,6 +1207,7 @@ impl DirEntry {
         target_os = "illumos",
         target_os = "l4re",
         target_os = "linux",
+        target_os = "trueos",
         target_os = "nto",
         target_os = "qnx",
         target_os = "redox",
@@ -1223,6 +1267,7 @@ impl DirEntry {
         target_os = "illumos",
         target_os = "fuchsia",
         target_os = "redox",
+        target_os = "trueos",
         target_os = "aix",
         target_os = "nto",
         target_os = "qnx",
@@ -1241,6 +1286,7 @@ impl DirEntry {
         target_os = "illumos",
         target_os = "fuchsia",
         target_os = "redox",
+        target_os = "trueos",
         target_os = "aix",
         target_os = "nto",
         target_os = "qnx",
@@ -1990,6 +2036,7 @@ impl fmt::Debug for Mode {
     }
 }
 
+#[cfg(not(target_os = "trueos"))]
 pub fn readdir(path: &Path) -> io::Result<ReadDir> {
     let ptr = run_path_with_cstr(path, &|p| unsafe { Ok(libc::opendir(p.as_ptr())) })?;
     if ptr.is_null() {
@@ -2001,20 +2048,191 @@ pub fn readdir(path: &Path) -> io::Result<ReadDir> {
     }
 }
 
+#[cfg(target_os = "trueos")]
+pub fn readdir(path: &Path) -> io::Result<ReadDir> {
+    unsafe extern "C" {
+        fn trueos_cabi_async_fs_list_dir_start(path_ptr: *const u8, path_len: usize) -> i32;
+        fn trueos_cabi_async_fs_status(id: u32) -> i32;
+        fn trueos_cabi_async_fs_result_len(id: u32) -> isize;
+        fn trueos_cabi_async_fs_result_read(
+            id: u32,
+            offset: usize,
+            out_ptr: *mut u8,
+            out_cap: usize,
+        ) -> isize;
+        fn trueos_cabi_async_fs_discard(id: u32) -> i32;
+        fn trueos_cabi_poll_once();
+    }
+
+    struct Operation(u32);
+
+    impl Drop for Operation {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = trueos_cabi_async_fs_discard(self.0);
+            }
+        }
+    }
+
+    fn error(code: i32) -> io::Error {
+        let errno = match code {
+            -8 => libc::ENOENT,
+            -7 => libc::ENAMETOOLONG,
+            -3 => libc::ENOSPC,
+            -1 | -4 | -6 => libc::EINVAL,
+            _ => libc::EIO,
+        };
+        io::Error::from_raw_os_error(errno)
+    }
+
+    let path_bytes = path.as_os_str().as_bytes();
+    let id = unsafe { trueos_cabi_async_fs_list_dir_start(path_bytes.as_ptr(), path_bytes.len()) };
+    if id <= 0 {
+        return Err(error(id));
+    }
+    let operation = Operation(id as u32);
+
+    loop {
+        match unsafe { trueos_cabi_async_fs_status(operation.0) } {
+            0 => unsafe { trueos_cabi_poll_once() },
+            1 => break,
+            code => return Err(error(code)),
+        }
+    }
+
+    let len = unsafe { trueos_cabi_async_fs_result_len(operation.0) };
+    if len < 0 {
+        return Err(error(len as i32));
+    }
+    let mut listing = vec![0u8; len as usize];
+    let mut offset = 0usize;
+    while offset < listing.len() {
+        let got = unsafe {
+            trueos_cabi_async_fs_result_read(
+                operation.0,
+                offset,
+                listing[offset..].as_mut_ptr(),
+                listing.len() - offset,
+            )
+        };
+        if got < 0 {
+            return Err(error(got as i32));
+        }
+        if got == 0 {
+            return Err(io::const_error!(
+                io::ErrorKind::UnexpectedEof,
+                "TRUEOSFS directory listing ended early",
+            ));
+        }
+        offset = offset.saturating_add(got as usize);
+    }
+
+    let mut entries = Vec::new();
+    for name in listing.split(|byte| *byte == b'\n') {
+        if name.is_empty() || name == b"." || name == b".." {
+            continue;
+        }
+        let name = crate::ffi::CString::new(name).map_err(|_| {
+            io::const_error!(
+                io::ErrorKind::InvalidData,
+                "TRUEOSFS directory entry contains a NUL byte",
+            )
+        })?;
+        entries.push(name);
+    }
+
+    Ok(ReadDir::new(InnerReadDir {
+        root: path.to_path_buf(),
+        entries,
+    }))
+}
+
+#[cfg(not(target_os = "trueos"))]
 pub fn unlink(p: &CStr) -> io::Result<()> {
     cvt(unsafe { libc::unlink(p.as_ptr()) }).map(|_| ())
 }
 
+#[cfg(target_os = "trueos")]
+pub fn unlink(p: &CStr) -> io::Result<()> {
+    unsafe extern "C" {
+        fn trueos_cabi_async_fs_remove_start(path_ptr: *const u8, path_len: usize) -> i32;
+        fn trueos_cabi_async_fs_status(id: u32) -> i32;
+        fn trueos_cabi_async_fs_discard(id: u32) -> i32;
+        fn trueos_cabi_poll_once();
+    }
+
+    struct Operation(u32);
+
+    impl Drop for Operation {
+        fn drop(&mut self) {
+            unsafe {
+                let _ = trueos_cabi_async_fs_discard(self.0);
+            }
+        }
+    }
+
+    fn error(code: i32) -> io::Error {
+        let errno = match code {
+            -9 => libc::EEXIST,
+            -8 => libc::ENOENT,
+            -7 => libc::ENAMETOOLONG,
+            -3 => libc::ENOSPC,
+            -1 | -4 | -6 => libc::EINVAL,
+            _ => libc::EIO,
+        };
+        io::Error::from_raw_os_error(errno)
+    }
+
+    let path = p.to_bytes();
+    let id = unsafe { trueos_cabi_async_fs_remove_start(path.as_ptr(), path.len()) };
+    if id <= 0 {
+        return Err(error(id));
+    }
+    let operation = Operation(id as u32);
+    loop {
+        match unsafe { trueos_cabi_async_fs_status(operation.0) } {
+            0 => unsafe { trueos_cabi_poll_once() },
+            1 => return Ok(()),
+            code => return Err(error(code)),
+        }
+    }
+}
+
+#[cfg(not(target_os = "trueos"))]
 pub fn rename(old: &CStr, new: &CStr) -> io::Result<()> {
     cvt(unsafe { libc::rename(old.as_ptr(), new.as_ptr()) }).map(|_| ())
+}
+
+#[cfg(target_os = "trueos")]
+pub fn rename(old: &CStr, new: &CStr) -> io::Result<()> {
+    // There is deliberately no process-wide atomic-rename contract yet.
+    // A compiler Blueprint is a single writer, so copy-then-remove provides
+    // the required metadata/object publication semantics without inventing a
+    // process or IPC subsystem.
+    let old = Path::new(OsStr::from_bytes(old.to_bytes()));
+    let new = Path::new(OsStr::from_bytes(new.to_bytes()));
+    crate::fs::copy(old, new)?;
+    crate::fs::remove_file(old)
 }
 
 pub fn set_perm(p: &CStr, perm: FilePermissions) -> io::Result<()> {
     cvt_r(|| unsafe { libc::chmod(p.as_ptr(), perm.mode) }).map(|_| ())
 }
 
+#[cfg(not(target_os = "trueos"))]
 pub fn rmdir(p: &CStr) -> io::Result<()> {
     cvt(unsafe { libc::rmdir(p.as_ptr()) }).map(|_| ())
+}
+
+#[cfg(target_os = "trueos")]
+pub fn rmdir(p: &CStr) -> io::Result<()> {
+    // TRUEOSFS directories are namespace prefixes rather than inode objects.
+    // Once their children are gone, the async remove operation is the only
+    // cleanup contract required (and may report NotFound for an empty prefix).
+    match unlink(p) {
+        Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(()),
+        result => result,
+    }
 }
 
 pub fn readlink(c_path: &CStr) -> io::Result<PathBuf> {
@@ -2049,6 +2267,13 @@ pub fn symlink(original: &CStr, link: &CStr) -> io::Result<()> {
 
 pub fn link(original: &CStr, link: &CStr) -> io::Result<()> {
     cfg_select! {
+        target_os = "trueos" => {
+            let _ = (original, link);
+            return Err(io::const_error!(
+                io::ErrorKind::Unsupported,
+                "hard links are not supported by TRUEOSFS",
+            ));
+        }
         any(
             // VxWorks, Redox and ESP-IDF lack `linkat`, so use `link` instead.
             // POSIX leaves it implementation-defined whether `link` follows
@@ -2110,6 +2335,7 @@ pub fn lstat(p: &CStr) -> io::Result<FileAttr> {
     Ok(FileAttr::from_stat64(stat))
 }
 
+#[cfg(not(target_os = "trueos"))]
 pub fn canonicalize(path: &CStr) -> io::Result<PathBuf> {
     let r = unsafe { libc::realpath(path.as_ptr(), ptr::null_mut()) };
     if r.is_null() {
@@ -2120,6 +2346,35 @@ pub fn canonicalize(path: &CStr) -> io::Result<PathBuf> {
         libc::free(r as *mut _);
         buf
     })))
+}
+
+#[cfg(target_os = "trueos")]
+pub fn canonicalize(path: &CStr) -> io::Result<PathBuf> {
+    use crate::path::Component;
+
+    // TRUEOSFS has no symbolic-link nodes. Canonicalization is therefore
+    // lexical normalization plus the same existence check that `realpath`
+    // would perform, without importing the unsupported libc `realpath` stub.
+    let path = PathBuf::from(OsString::from_vec(path.to_bytes().to_vec()));
+    let absolute = if path.is_absolute() {
+        path
+    } else {
+        crate::env::current_dir()?.join(path)
+    };
+    let mut normalized = PathBuf::new();
+    for component in absolute.components() {
+        match component {
+            Component::RootDir => normalized.push("/"),
+            Component::CurDir => {}
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::Normal(component) => normalized.push(component),
+            Component::Prefix(_) => unreachable!("Unix paths have no prefix component"),
+        }
+    }
+    run_path_with_cstr(&normalized, &stat)?;
+    Ok(normalized)
 }
 
 fn open_from(from: &Path) -> io::Result<(crate::fs::File, crate::fs::Metadata)> {
@@ -2402,15 +2657,23 @@ pub fn lchown(path: &Path, uid: u32, gid: u32) -> io::Result<()> {
     Err(io::const_error!(io::ErrorKind::Unsupported, "lchown not supported by vxworks"))
 }
 
-#[cfg(not(any(target_os = "fuchsia", target_os = "vxworks", target_os = "wasi")))]
+#[cfg(not(any(
+    target_os = "fuchsia",
+    target_os = "trueos",
+    target_os = "vxworks",
+    target_os = "wasi"
+)))]
 pub fn chroot(dir: &Path) -> io::Result<()> {
     run_path_with_cstr(dir, &|dir| cvt(unsafe { libc::chroot(dir.as_ptr()) }).map(|_| ()))
 }
 
-#[cfg(target_os = "vxworks")]
+#[cfg(any(target_os = "trueos", target_os = "vxworks"))]
 pub fn chroot(dir: &Path) -> io::Result<()> {
     let _ = dir;
-    Err(io::const_error!(io::ErrorKind::Unsupported, "chroot not supported by vxworks"))
+    Err(io::const_error!(
+        io::ErrorKind::Unsupported,
+        "chroot is not supported on this target",
+    ))
 }
 
 #[cfg(not(target_os = "wasi"))]
@@ -2430,6 +2693,7 @@ pub use remove_dir_impl::remove_dir_all;
     target_os = "vita",
     target_os = "nto",
     target_os = "qnx",
+    target_os = "trueos",
     target_os = "vxworks",
     miri
 ))]
@@ -2445,6 +2709,7 @@ mod remove_dir_impl {
     target_os = "vita",
     target_os = "nto",
     target_os = "qnx",
+    target_os = "trueos",
     target_os = "vxworks",
     miri
 )))]

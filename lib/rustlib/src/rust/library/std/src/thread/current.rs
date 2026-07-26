@@ -119,21 +119,41 @@ pub(super) mod id {
 /// Tries to set the thread handle for the current thread. Fails if a handle was
 /// already set or if the thread ID of `thread` would change an already-set ID.
 pub(super) fn set_current(thread: Thread) -> Result<(), Thread> {
-    if CURRENT.get() != NONE {
-        return Err(thread);
+    #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+    {
+        // TRUEOS carrier lanes may host multiple logical std threads over time.
+        // Rebind the per-lane std thread handle/id instead of treating a prior
+        // logical thread as a fatal TLS collision.
+        let current = CURRENT.get();
+        if current > DESTROYED {
+            unsafe {
+                drop(Thread::from_raw(current));
+            }
+        }
+        id::set(thread.id());
+        crate::sys::thread_local::guard::enable();
+        CURRENT.set(thread.into_raw().cast_mut());
+        return Ok(());
     }
 
-    match id::get() {
-        Some(id) if id == thread.id() => {}
-        None => id::set(thread.id()),
-        _ => return Err(thread),
-    }
+    #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+    {
+        if CURRENT.get() != NONE {
+            return Err(thread);
+        }
 
-    // Make sure that `crate::rt::thread_cleanup` will be run, which will
-    // call `drop_current`.
-    crate::sys::thread_local::guard::enable();
-    CURRENT.set(thread.into_raw().cast_mut());
-    Ok(())
+        match id::get() {
+            Some(id) if id == thread.id() => {}
+            None => id::set(thread.id()),
+            _ => return Err(thread),
+        }
+
+        // Make sure that `crate::rt::thread_cleanup` will be run, which will
+        // call `drop_current`.
+        crate::sys::thread_local::guard::enable();
+        CURRENT.set(thread.into_raw().cast_mut());
+        Ok(())
+    }
 }
 
 /// Gets the unique identifier of the thread which invokes it.

@@ -18,5 +18,15 @@ const STACK_PER_RECURSION: usize = 16 * 1024 * 1024; // 16MB
 /// Should not be sprinkled around carelessly, as it causes a little bit of overhead.
 #[inline]
 pub fn ensure_sufficient_stack<R>(f: impl FnOnce() -> R) -> R {
-    stacker::maybe_grow(RED_ZONE, STACK_PER_RECURSION, f)
+    #[cfg(target_os = "trueos")]
+    {
+        // TRUEOS compiler Blueprints run on a bounded runtime worker stack and
+        // have no virtual-memory stack remapping contract. Keep the strategic
+        // recursion boundary while avoiding stacker's mmap/mprotect substrate.
+        f()
+    }
+    #[cfg(not(target_os = "trueos"))]
+    {
+        stacker::maybe_grow(RED_ZONE, STACK_PER_RECURSION, f)
+    }
 }

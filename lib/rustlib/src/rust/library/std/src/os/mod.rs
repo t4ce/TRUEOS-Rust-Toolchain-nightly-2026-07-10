@@ -50,7 +50,7 @@ cfg_select! {
         pub mod unix;
         #[cfg(target_vendor = "apple")]
         pub mod darwin;
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "trueos"))]
         pub mod linux;
     }
     target_family = "wasm" => {
@@ -77,7 +77,7 @@ cfg_select! {
 ))]
 pub mod fd;
 
-#[cfg(any(target_os = "linux", target_os = "android", target_os = "cygwin", doc))]
+#[cfg(any(target_os = "linux", target_os = "trueos", target_os = "android", target_os = "cygwin", doc))]
 mod net;
 
 // # Ordinary platforms

@@ -73,6 +73,23 @@ impl Timespec {
 
     #[allow(dead_code)]
     pub fn now(clock: libc::clockid_t) -> Timespec {
+        #[cfg(target_os = "trueos")]
+        {
+            unsafe extern "Rust" {
+                fn trueos_platform_monotonic_nanos() -> u64;
+                fn trueos_platform_unix_seconds() -> u64;
+            }
+
+            let nanos = if clock == libc::CLOCK_MONOTONIC {
+                unsafe { trueos_platform_monotonic_nanos() }
+            } else {
+                unsafe { trueos_platform_unix_seconds() }.saturating_mul(NSEC_PER_SEC)
+            };
+            let secs = (nanos / NSEC_PER_SEC).min(i64::MAX as u64) as i64;
+            let nsec = (nanos % NSEC_PER_SEC) as i64;
+            return Timespec::new(secs, nsec).unwrap_or_else(|_| Timespec::zero());
+        }
+
         use crate::mem::MaybeUninit;
         use crate::sys::cvt;
 

@@ -1,11 +1,40 @@
 //! On some targets like wasm there's no threads, so no need to generate
 //! thread locals and we can instead just use plain statics!
 
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 use crate::cell::{Cell, UnsafeCell};
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 use crate::mem::MaybeUninit;
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+use crate::{
+    boxed::Box,
+    marker::PhantomData,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 use crate::ptr;
 
-#[cfg(target_has_threads)]
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+const TRUEOS_STD_NO_THREADS_PER_SLOT: usize = 4096;
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+unsafe extern "C" {
+    fn trueos_cabi_wls_current_slot() -> u32;
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+fn trueos_std_thread_local_slot() -> usize {
+    let slot = unsafe { trueos_cabi_wls_current_slot() } as usize;
+    if slot < TRUEOS_STD_NO_THREADS_PER_SLOT {
+        slot
+    } else {
+        0
+    }
+}
+
+#[cfg(all(
+    target_has_threads,
+    not(any(target_os = "trueos", target_os = "zkvm"))
+))]
 compile_error!("Using no_threads implementation on a target with threads");
 
 #[doc(hidden)]
@@ -22,9 +51,9 @@ pub macro thread_local_inner {
         unsafe {
             $crate::thread::LocalKey::new(|_| {
                 $(#[$align_attr])*
-                static __RUST_STD_INTERNAL_VAL: $crate::thread::local_impl::EagerStorage<$t> =
-                    $crate::thread::local_impl::EagerStorage { value: __RUST_STD_INTERNAL_INIT };
-                &__RUST_STD_INTERNAL_VAL.value
+                static __RUST_STD_INTERNAL_VAL: $crate::thread::local_impl::LazyStorage<$t> =
+                    $crate::thread::local_impl::LazyStorage::new();
+                __RUST_STD_INTERNAL_VAL.get(None, || __RUST_STD_INTERNAL_INIT)
             })
         }
     }},
@@ -53,6 +82,7 @@ pub struct EagerStorage<T> {
 // SAFETY: the target doesn't have threads.
 unsafe impl<T> Sync for EagerStorage<T> {}
 
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum State {
     Initial,
@@ -60,6 +90,56 @@ enum State {
     Destroying,
 }
 
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+#[allow(missing_debug_implementations)]
+pub struct LazyStorage<T> {
+    slots: [AtomicUsize; TRUEOS_STD_NO_THREADS_PER_SLOT],
+    _marker: PhantomData<fn() -> T>,
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+impl<T> LazyStorage<T> {
+    pub const fn new() -> LazyStorage<T> {
+        LazyStorage {
+            slots: [const { AtomicUsize::new(0) }; TRUEOS_STD_NO_THREADS_PER_SLOT],
+            _marker: PhantomData,
+        }
+    }
+
+    #[inline]
+    pub fn get(&'static self, i: Option<&mut Option<T>>, f: impl FnOnce() -> T) -> *const T {
+        let slot = trueos_std_thread_local_slot();
+        let cell = &self.slots[slot];
+        let existing = cell.load(Ordering::Acquire);
+        if existing != 0 {
+            return existing as *const T;
+        }
+
+        self.initialize(cell, i, f)
+    }
+
+    #[cold]
+    fn initialize(
+        &'static self,
+        cell: &AtomicUsize,
+        i: Option<&mut Option<T>>,
+        f: impl FnOnce() -> T,
+    ) -> *const T {
+        let value = i.and_then(Option::take).unwrap_or_else(f);
+        let ptr = Box::leak(Box::new(value)) as *mut T as usize;
+        match cell.compare_exchange(0, ptr, Ordering::AcqRel, Ordering::Acquire) {
+            Ok(_) => ptr as *const T,
+            Err(existing) => {
+                unsafe {
+                    drop(Box::from_raw(ptr as *mut T));
+                }
+                existing as *const T
+            }
+        }
+    }
+}
+
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 #[allow(missing_debug_implementations)]
 #[repr(C)]
 pub struct LazyStorage<T> {
@@ -68,6 +148,7 @@ pub struct LazyStorage<T> {
     state: Cell<State>,
 }
 
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 impl<T> LazyStorage<T> {
     pub const fn new() -> LazyStorage<T> {
         LazyStorage {
@@ -119,7 +200,12 @@ impl<T> LazyStorage<T> {
     }
 }
 
+// SAFETY: the TRUEOS variant uses per-slot atomics and leaked values.
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+unsafe impl<T> Sync for LazyStorage<T> {}
+
 // SAFETY: the target doesn't have threads.
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 unsafe impl<T> Sync for LazyStorage<T> {}
 
 #[rustc_macro_transparency = "semiopaque"]
@@ -131,10 +217,34 @@ pub(crate) macro local_pointer {
     },
 }
 
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+pub(crate) struct LocalPointer {
+    slots: [AtomicUsize; TRUEOS_STD_NO_THREADS_PER_SLOT],
+}
+
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+impl LocalPointer {
+    pub const fn __new() -> LocalPointer {
+        LocalPointer {
+            slots: [const { AtomicUsize::new(0) }; TRUEOS_STD_NO_THREADS_PER_SLOT],
+        }
+    }
+
+    pub fn get(&self) -> *mut () {
+        self.slots[trueos_std_thread_local_slot()].load(Ordering::Acquire) as *mut ()
+    }
+
+    pub fn set(&self, p: *mut ()) {
+        self.slots[trueos_std_thread_local_slot()].store(p as usize, Ordering::Release)
+    }
+}
+
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 pub(crate) struct LocalPointer {
     p: Cell<*mut ()>,
 }
 
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 impl LocalPointer {
     pub const fn __new() -> LocalPointer {
         LocalPointer { p: Cell::new(ptr::null_mut()) }
@@ -149,5 +259,10 @@ impl LocalPointer {
     }
 }
 
+// SAFETY: the TRUEOS variant uses per-slot atomics.
+#[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+unsafe impl Sync for LocalPointer {}
+
 // SAFETY: the target doesn't have threads.
+#[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
 unsafe impl Sync for LocalPointer {}

@@ -105,6 +105,7 @@ cfg_select! {
     }
     any(
         all(target_family = "wasm", target_os = "unknown"),
+        target_os = "trueos",
         target_os = "xous",
         target_os = "vexos",
     ) => {
@@ -118,6 +119,7 @@ cfg_select! {
 
 #[cfg(not(any(
     target_os = "linux",
+    target_os = "trueos",
     target_os = "android",
     all(target_family = "wasm", target_os = "unknown"),
     all(target_os = "wasi", not(target_env = "p1")),

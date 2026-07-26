@@ -266,6 +266,7 @@ pub fn current_exe() -> io::Result<PathBuf> {
 
 #[cfg(any(
     target_os = "linux",
+    target_os = "trueos",
     target_os = "cygwin",
     target_os = "hurd",
     target_os = "android",

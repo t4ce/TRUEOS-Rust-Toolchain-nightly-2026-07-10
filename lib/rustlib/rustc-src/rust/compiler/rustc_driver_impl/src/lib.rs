@@ -1647,7 +1647,7 @@ pub fn init_logger_with_additional_layer<F, T>(
 /// Install our usual `ctrlc` handler, which sets [`rustc_const_eval::CTRL_C_RECEIVED`].
 /// Making this handler optional lets tools can install a different handler, if they wish.
 pub fn install_ctrlc_handler() {
-    #[cfg(all(not(miri), not(target_family = "wasm")))]
+    #[cfg(all(not(miri), not(target_family = "wasm"), not(target_os = "trueos")))]
     ctrlc::set_handler(move || {
         // Indicate that we have been signaled to stop, then give the rest of the compiler a bit of
         // time to check CTRL_C_RECEIVED and run its own shutdown logic, but after a short amount

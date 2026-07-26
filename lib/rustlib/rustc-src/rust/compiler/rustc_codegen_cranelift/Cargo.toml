@@ -7,6 +7,24 @@ edition = "2024"
 crate-type = ["rlib"]
 
 [dependencies]
+# rustc bootstrap normally injects these compiler crates from the stage sysroot.
+# The TRUEOS Blueprint builds one static Cargo graph instead, so keep every
+# compiler-private dependency in that graph explicitly.
+rustc_abi = { path = "../rustc_abi" }
+rustc_ast = { path = "../rustc_ast" }
+rustc_codegen_ssa = { path = "../rustc_codegen_ssa" }
+rustc_const_eval = { path = "../rustc_const_eval" }
+rustc_data_structures = { path = "../rustc_data_structures" }
+rustc_errors = { path = "../rustc_errors" }
+rustc_hir = { path = "../rustc_hir" }
+rustc_index = { path = "../rustc_index" }
+rustc_log = { path = "../rustc_log" }
+rustc_middle = { path = "../rustc_middle" }
+rustc_session = { path = "../rustc_session" }
+rustc_span = { path = "../rustc_span" }
+rustc_symbol_mangling = { path = "../rustc_symbol_mangling" }
+rustc_target = { path = "../rustc_target" }
+
 # These have to be in sync with each other
 cranelift-codegen = { version = "0.132.0", default-features = false, features = ["std", "timing", "unwind", "all-native-arch"] }
 cranelift-frontend = { version = "0.132.0" }

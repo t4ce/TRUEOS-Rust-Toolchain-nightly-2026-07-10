@@ -64,15 +64,31 @@ impl RandomState {
         // iteration order allows a form of DOS attack. To counter that we
         // increment one of the seeds on every RandomState creation, giving
         // every corresponding HashMap a different iteration order.
-        thread_local!(static KEYS: Cell<(u64, u64)> = {
-            Cell::new(hashmap_random_keys())
-        });
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        {
+            use crate::sync::atomic::{AtomicU64, Ordering};
 
-        KEYS.with(|keys| {
-            let (k0, k1) = keys.get();
-            keys.set((k0.wrapping_add(1), k1));
+            static TRUEOS_HASH_RANDOM_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+            let seed = TRUEOS_HASH_RANDOM_COUNTER.fetch_add(1, Ordering::Relaxed);
+            let (mut k0, mut k1) = hashmap_random_keys();
+            k0 = k0.wrapping_add(seed);
+            k1 = k1.wrapping_add(seed.rotate_left(32));
             RandomState { k0, k1 }
-        })
+        }
+
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+        {
+            thread_local!(static KEYS: Cell<(u64, u64)> = {
+                Cell::new(hashmap_random_keys())
+            });
+
+            KEYS.with(|keys| {
+                let (k0, k1) = keys.get();
+                keys.set((k0.wrapping_add(1), k1));
+                RandomState { k0, k1 }
+            })
+        }
     }
 }
 
