@@ -1,6 +1,8 @@
 #![feature(rustc_private)]
 #![no_main]
 
+mod blueprint;
+
 use core::ffi::c_char;
 use std::collections::BTreeSet;
 use std::fs;
@@ -18,14 +20,21 @@ const SYSROOT: &str = "rustc-sysroot";
 const SYSROOT_MANIFEST: &str = "rustc-sysroot/TRUEOS_SYSROOT_MANIFEST";
 const PAYLOAD_LIB: &str = "rustc-payload/lib";
 const TRUEOS_HELLO_SOURCE: &str = r#"#![no_std]
+#![no_main]
 
-use trueos::logl::{self, level};
+use trueos::logl::level;
 
-fn main() {
-    logl::log(
-        level::INFO,
-        "hello_world: rustc",
-    );
+unsafe extern "C" {
+    fn trueos_cabi_write(stream: u32, bytes: *const u8, len: usize);
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn _start() {
+    let message = b"hello_world: rustc\n";
+    let stream = if level::INFO >= 3 { 1 } else { 2 };
+    unsafe {
+        trueos_cabi_write(stream, message.as_ptr(), message.len());
+    }
 }
 "#;
 
@@ -36,6 +45,9 @@ struct CompilerCallbacks {
 impl rustc_driver_impl::Callbacks for CompilerCallbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
         println!("TRUEOS rustc min: compiler config entered");
+        config.make_codegen_backend = Some(Box::new(|_| {
+            rustc_codegen_cranelift::__rustc_codegen_backend()
+        }));
         if self.in_memory_smoke {
             config.input = rustc_session::config::Input::Str {
                 name: rustc_span::FileName::Custom("rustc-work/trueos-hello.rs".into()),
@@ -343,11 +355,14 @@ fn compiler_args(mut args: Vec<String>) -> Result<Vec<String>, String> {
             "trueos_rustc_hello_smoke".into(),
             "--edition=2024".into(),
             "--crate-type".into(),
-            "rlib".into(),
-            "--emit=metadata".into(),
-            "-Zno-codegen".into(),
+            "lib".into(),
+            "--emit=obj".into(),
+            "-Cpanic=abort".into(),
+            "-Cdebuginfo=0".into(),
+            "-Ccodegen-units=1".into(),
+            "-Zno-parallel-backend".into(),
             "-o".into(),
-            work.join("trueos-hello.rmeta")
+            work.join("trueos-rustc-hello.o")
                 .to_string_lossy()
                 .into_owned(),
         ]);
@@ -419,15 +434,21 @@ fn compiler_args(mut args: Vec<String>) -> Result<Vec<String>, String> {
     Ok(args)
 }
 
-fn compile(args: Vec<String>, in_memory_smoke: bool) -> Result<(), String> {
+fn compile(
+    args: Vec<String>,
+    in_memory_smoke: bool,
+) -> Result<Option<blueprint::PublishedBlueprint>, String> {
     println!("TRUEOS rustc min: compiler entered");
     let exit = rustc_driver_impl::catch_with_exit_code(|| {
         rustc_driver_impl::run_compiler(&args, &mut CompilerCallbacks { in_memory_smoke })
     });
-    if exit == ExitCode::SUCCESS {
-        Ok(())
+    if exit != ExitCode::SUCCESS {
+        return Err(format!("rustc exited with {exit:?}"));
+    }
+    if in_memory_smoke {
+        blueprint::publish(Path::new("rustc-work/trueos-rustc-hello.o")).map(Some)
     } else {
-        Err(format!("rustc exited with {exit:?}"))
+        Ok(None)
     }
 }
 
@@ -451,12 +472,20 @@ fn run(process_args: Vec<String>) -> bool {
             .map_err(|err| format!("compiler lane failed: {err}"))?
     });
     match result {
-        Ok(()) => {
-            if default_smoke {
-                println!("TRUEOS rustc {TIER}: trueos hello smoke compile passed");
-            } else {
-                println!("TRUEOS rustc {TIER}: compiler invocation passed");
-            }
+        Ok(Some(published)) => {
+            println!("TRUEOS rustc {TIER}: trueos hello Blueprint compile passed");
+            println!(
+                "TRUEOS rustc {TIER}: Blueprint stored path={} bytes={} object={} entry=sec:{}+0x{:x}",
+                blueprint::OUTPUT_PATH,
+                published.blueprint_bytes,
+                published.object_bytes,
+                published.entry_hint >> 32,
+                published.entry_hint as u32,
+            );
+            true
+        }
+        Ok(None) => {
+            println!("TRUEOS rustc {TIER}: compiler invocation passed");
             true
         }
         Err(err) => {
