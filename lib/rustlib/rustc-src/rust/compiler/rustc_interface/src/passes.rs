@@ -21,7 +21,7 @@ use rustc_expand::base::{ExtCtxt, LintStoreExpand};
 use rustc_feature::Features;
 use rustc_fs_util::try_canonicalize;
 use rustc_hir::attrs::AttributeKind;
-use rustc_hir::def_id::{LOCAL_CRATE, StableCrateId, StableCrateIdMap};
+use rustc_hir::def_id::{LOCAL_CRATE, LocalDefId, StableCrateId, StableCrateIdMap};
 use rustc_hir::definitions::Definitions;
 use rustc_hir::limit::Limit;
 use rustc_hir::{Attribute, Target, find_attr};
@@ -57,6 +57,14 @@ fn trueos_analysis_marker(stage: &'static str) {
     std::println!("TRUEOS rustc analysis: {stage}");
     #[cfg(not(target_os = "trueos"))]
     let _ = stage;
+}
+
+#[inline]
+fn trueos_mir_owner_marker(stage: &'static str, def_id: LocalDefId) {
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc mir-checks: {stage} def={def_id:?}");
+    #[cfg(not(target_os = "trueos"))]
+    let _ = (stage, def_id);
 }
 
 pub fn parse<'a>(sess: &'a Session) -> ast::Crate {
@@ -1165,6 +1173,7 @@ fn run_required_analyses(tcx: TyCtxt<'_>) {
     trueos_analysis_marker("mir checks begin");
     sess.time("MIR_borrow_checking", || {
         tcx.par_hir_body_owners(|def_id| {
+            trueos_mir_owner_marker("owner begin", def_id);
             let not_typeck_child = !tcx.is_typeck_child(def_id.to_def_id());
             if not_typeck_child {
                 // Child unsafety and borrowck happens together with the parent
@@ -1179,6 +1188,7 @@ fn run_required_analyses(tcx: TyCtxt<'_>) {
             }
             tcx.ensure_ok().has_ffi_unwind_calls(def_id);
             tcx.ensure_ok().check_liveness(def_id);
+            trueos_mir_owner_marker("pre-codegen checks complete", def_id);
 
             // If we need to codegen, ensure that we emit all errors from
             // `mir_drops_elaborated_and_const_checked` now, to avoid discovering
@@ -1186,7 +1196,9 @@ fn run_required_analyses(tcx: TyCtxt<'_>) {
             if tcx.sess.opts.output_types.should_codegen()
                 || tcx.hir_body_const_context(def_id).is_some()
             {
+                trueos_mir_owner_marker("drops elaboration begin", def_id);
                 tcx.ensure_ok().mir_drops_elaborated_and_const_checked(def_id);
+                trueos_mir_owner_marker("drops elaboration complete", def_id);
             }
             if tcx.is_coroutine(def_id.to_def_id())
                 && (!tcx.is_async_drop_in_place_coroutine(def_id.to_def_id()))
@@ -1197,6 +1209,7 @@ fn run_required_analyses(tcx: TyCtxt<'_>) {
                         tcx.type_of(def_id).instantiate_identity().skip_norm_wip(),
                     ));
             }
+            trueos_mir_owner_marker("owner complete", def_id);
         });
     });
     trueos_analysis_marker("mir checks complete");

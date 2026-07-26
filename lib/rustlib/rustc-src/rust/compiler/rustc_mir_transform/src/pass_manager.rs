@@ -318,6 +318,12 @@ fn run_passes_inner<'tcx>(
                 dumper.dump_mir(body);
             }
 
+            #[cfg(target_os = "trueos")]
+            std::println!(
+                "TRUEOS rustc mir-pass: begin pass={pass_name} def={:?} phase={:?}",
+                body.source.def_id(),
+                body.phase,
+            );
             if let Some(prof_arg) = &prof_arg {
                 tcx.sess
                     .prof
@@ -326,6 +332,12 @@ fn run_passes_inner<'tcx>(
             } else {
                 pass.run_pass(tcx, body);
             }
+            #[cfg(target_os = "trueos")]
+            std::println!(
+                "TRUEOS rustc mir-pass: complete pass={pass_name} def={:?} phase={:?}",
+                body.source.def_id(),
+                body.phase,
+            );
 
             if let Some(dumper) = dumper {
                 dumper.set_disambiguator(&"after").dump_mir(body);

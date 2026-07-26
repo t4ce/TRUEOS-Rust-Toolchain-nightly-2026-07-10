@@ -37,6 +37,14 @@ use std::sync::LazyLock;
 
 use pass_manager::{self as pm, Lint, MirLint, MirPass, WithMinOptLevel};
 
+#[inline]
+fn trueos_mir_transform_marker(stage: &'static str, def: impl std::fmt::Debug) {
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc mir-transform: {stage} def={def:?}");
+    #[cfg(not(target_os = "trueos"))]
+    let _ = (stage, def);
+}
+
 mod check_pointers;
 mod cost_checker;
 mod cross_crate_inline;
@@ -536,6 +544,7 @@ fn inner_mir_for_ctfe(tcx: TyCtxt<'_>, def: LocalDefId) -> Body<'_> {
 /// mir borrowck *before* doing so in order to ensure that borrowck can be run and doesn't
 /// end up missing the source MIR due to stealing happening.
 fn mir_drops_elaborated_and_const_checked(tcx: TyCtxt<'_>, def: LocalDefId) -> &Steal<Body<'_>> {
+    trueos_mir_transform_marker("provider begin", def);
     if tcx.is_coroutine(def.to_def_id()) {
         tcx.ensure_done().mir_coroutine_witnesses(def);
     }
@@ -546,6 +555,7 @@ fn mir_drops_elaborated_and_const_checked(tcx: TyCtxt<'_>, def: LocalDefId) -> &
     } else {
         None
     };
+    trueos_mir_transform_marker("borrowck ready", def);
 
     let is_fn_like = tcx.def_kind(def).is_fn_like();
     if is_fn_like {
@@ -558,9 +568,13 @@ fn mir_drops_elaborated_and_const_checked(tcx: TyCtxt<'_>, def: LocalDefId) -> &
     }
 
     tcx.ensure_done().check_liveness(def);
+    trueos_mir_transform_marker("liveness ready", def);
 
+    trueos_mir_transform_marker("mir promoted begin", def);
     let (body, _) = tcx.mir_promoted(def);
+    trueos_mir_transform_marker("mir promoted ready", def);
     let mut body = body.steal();
+    trueos_mir_transform_marker("mir promoted stolen", def);
 
     if let Some(error_reported) = tainted_by_errors {
         body.tainted_by_errors = Some(error_reported);
@@ -587,10 +601,14 @@ fn mir_drops_elaborated_and_const_checked(tcx: TyCtxt<'_>, def: LocalDefId) -> &
         }
         _ => {}
     }
+    trueos_mir_transform_marker("well formed ready", def);
 
     run_analysis_to_runtime_passes(tcx, &mut body);
+    trueos_mir_transform_marker("runtime passes complete", def);
 
-    tcx.alloc_steal_mir(body)
+    let body = tcx.alloc_steal_mir(body);
+    trueos_mir_transform_marker("provider complete", def);
+    body
 }
 
 // Made public so that `mir_drops_elaborated_and_const_checked` can be overridden
@@ -601,6 +619,7 @@ pub fn run_analysis_to_runtime_passes<'tcx>(tcx: TyCtxt<'tcx>, body: &mut Body<'
 
     debug!("analysis_mir_cleanup({:?})", did);
     run_analysis_cleanup_passes(tcx, body);
+    trueos_mir_transform_marker("analysis cleanup complete", did);
     assert!(body.phase == MirPhase::Analysis(AnalysisPhase::PostCleanup));
 
     // Do a little drop elaboration before const-checking if `const_precise_live_drops` is enabled.
@@ -620,10 +639,12 @@ pub fn run_analysis_to_runtime_passes<'tcx>(tcx: TyCtxt<'tcx>, body: &mut Body<'
 
     debug!("runtime_mir_lowering({:?})", did);
     run_runtime_lowering_passes(tcx, body);
+    trueos_mir_transform_marker("runtime lowering complete", did);
     assert!(body.phase == MirPhase::Runtime(RuntimePhase::Initial));
 
     debug!("runtime_mir_cleanup({:?})", did);
     run_runtime_cleanup_passes(tcx, body);
+    trueos_mir_transform_marker("runtime cleanup complete", did);
     assert!(body.phase == MirPhase::Runtime(RuntimePhase::PostCleanup));
 }
 
