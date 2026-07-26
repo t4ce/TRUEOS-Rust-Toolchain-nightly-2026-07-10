@@ -93,6 +93,21 @@ pub struct Proxy {
 }
 
 impl Proxy {
+    /// Construct a proxy for a compiler that is guaranteed to use one thread.
+    ///
+    /// The normal proxy owns a jobserver helper thread. A serial compiler never
+    /// needs to acquire an additional token, so starting that helper only adds
+    /// platform machinery (on Unix, a SIGUSR1 handler used to interrupt a
+    /// blocking read during teardown).
+    pub fn new_serial() -> Arc<Self> {
+        Arc::new(Proxy {
+            client: client(),
+            data: Mutex::new(ProxyData { used: 1, pending: 0 }),
+            wake_pending: Condvar::new(),
+            helper: OnceLock::new(),
+        })
+    }
+
     pub fn new() -> Arc<Self> {
         let proxy = Arc::new(Proxy {
             client: client(),
@@ -134,13 +149,15 @@ impl Proxy {
             // happen when all threads release their token.
             assert_eq!(data.pending, 0);
             data.used += 1;
-        } else {
+        } else if let Some(helper) = self.helper.get() {
             // Request a token from the helper thread. We can't directly use `acquire_raw`
             // as we also need to be able to wait for the final token in the process which
             // does not get a corresponding `release_raw` call.
-            self.helper.get().unwrap().request_token();
+            helper.request_token();
             data.pending += 1;
             self.wake_pending.wait(&mut data);
+        } else {
+            panic!("serial jobserver proxy requested a concurrent token");
         }
     }
 

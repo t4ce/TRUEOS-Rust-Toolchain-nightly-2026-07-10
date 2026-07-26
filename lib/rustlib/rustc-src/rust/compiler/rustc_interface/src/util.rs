@@ -159,7 +159,13 @@ fn run_in_thread_with_globals<F: FnOnce(CurrentGcx, Arc<Proxy>) -> R + Send, R: 
                     edition,
                     extra_symbols,
                     Some(sm_inputs),
-                    || f(CurrentGcx::new(), Proxy::new()),
+                    || {
+                        #[cfg(target_os = "trueos")]
+                        let jobserver_proxy = Proxy::new_serial();
+                        #[cfg(not(target_os = "trueos"))]
+                        let jobserver_proxy = Proxy::new();
+                        f(CurrentGcx::new(), jobserver_proxy)
+                    },
                 )
             })
             .unwrap()

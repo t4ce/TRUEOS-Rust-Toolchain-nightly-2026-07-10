@@ -30,9 +30,51 @@ pub trait Sized: MetaSized {}
 pub extern "C" fn trueos_rustc_smoke_answer() {}
 "#;
 
-struct CompilerCallbacks;
+struct CompilerCallbacks {
+    in_memory_smoke: bool,
+}
 
-impl rustc_driver_impl::Callbacks for CompilerCallbacks {}
+impl rustc_driver_impl::Callbacks for CompilerCallbacks {
+    fn config(&mut self, config: &mut rustc_interface::Config) {
+        println!("TRUEOS rustc min: compiler config entered");
+        if self.in_memory_smoke {
+            config.input = rustc_session::config::Input::Str {
+                name: rustc_span::FileName::Custom("rustc-work/min-smoke.rs".into()),
+                input: SMOKE_SOURCE.to_owned(),
+            };
+        }
+        config.psess_created = Some(Box::new(|_| {
+            println!("TRUEOS rustc min: compiler session created");
+        }));
+    }
+
+    fn after_crate_root_parsing(
+        &mut self,
+        _compiler: &rustc_interface::interface::Compiler,
+        _krate: &mut rustc_ast::ast::Crate,
+    ) -> rustc_driver_impl::Compilation {
+        println!("TRUEOS rustc min: crate root parsed");
+        rustc_driver_impl::Compilation::Continue
+    }
+
+    fn after_expansion<'tcx>(
+        &mut self,
+        _compiler: &rustc_interface::interface::Compiler,
+        _tcx: rustc_middle::ty::TyCtxt<'tcx>,
+    ) -> rustc_driver_impl::Compilation {
+        println!("TRUEOS rustc min: expansion complete");
+        rustc_driver_impl::Compilation::Continue
+    }
+
+    fn after_analysis<'tcx>(
+        &mut self,
+        _compiler: &rustc_interface::interface::Compiler,
+        _tcx: rustc_middle::ty::TyCtxt<'tcx>,
+    ) -> rustc_driver_impl::Compilation {
+        println!("TRUEOS rustc min: analysis complete");
+        rustc_driver_impl::Compilation::Continue
+    }
+}
 
 /// Copies the loader-owned C argv while execution is still on the Hull carrier.
 ///
@@ -100,7 +142,6 @@ fn compiler_args(mut args: Vec<String>) -> Result<Vec<String>, String> {
         let work = Path::new("rustc-work");
         fs::create_dir_all(work).map_err(|err| format!("create rustc-work: {err}"))?;
         let source = work.join("min-smoke.rs");
-        fs::write(&source, SMOKE_SOURCE).map_err(|err| format!("write min smoke: {err}"))?;
         args.extend([
             source.to_string_lossy().into_owned(),
             "--crate-name".into(),
@@ -128,9 +169,10 @@ fn compiler_args(mut args: Vec<String>) -> Result<Vec<String>, String> {
     Ok(args)
 }
 
-fn compile(args: Vec<String>) -> Result<(), String> {
+fn compile(args: Vec<String>, in_memory_smoke: bool) -> Result<(), String> {
+    println!("TRUEOS rustc min: compiler entered");
     let exit = rustc_driver_impl::catch_with_exit_code(|| {
-        rustc_driver_impl::run_compiler(&args, &mut CompilerCallbacks)
+        rustc_driver_impl::run_compiler(&args, &mut CompilerCallbacks { in_memory_smoke })
     });
     if exit == ExitCode::SUCCESS {
         Ok(())
@@ -154,7 +196,7 @@ fn run(process_args: Vec<String>) -> bool {
         .build()
         .expect("build TRUEOS Tokio runtime");
     let result = runtime.block_on(async move {
-        tokio::task::spawn_blocking(move || compile(args))
+        tokio::task::spawn_blocking(move || compile(args, default_smoke))
             .await
             .map_err(|err| format!("compiler lane failed: {err}"))?
     });

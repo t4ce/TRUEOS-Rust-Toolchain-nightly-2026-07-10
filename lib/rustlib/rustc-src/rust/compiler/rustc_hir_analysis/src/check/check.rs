@@ -763,9 +763,12 @@ fn check_static_linkage(tcx: TyCtxt<'_>, def_id: LocalDefId) {
 
 pub(crate) fn check_item_type(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Result<(), ErrorGuaranteed> {
     let mut res = Ok(());
+    crate::trueos_hir_analysis_def_marker("check item type generics begin", def_id);
     let generics = tcx.generics_of(def_id);
+    crate::trueos_hir_analysis_def_marker("check item type generics complete", def_id);
 
     for param in &generics.own_params {
+        crate::trueos_hir_analysis_def_marker("check item type generic param begin", def_id);
         match param.kind {
             ty::GenericParamDefKind::Lifetime { .. } => {}
             ty::GenericParamDefKind::Type { has_default, .. } => {
@@ -786,9 +789,13 @@ pub(crate) fn check_item_type(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Result<(),
                 }
             }
         }
+        crate::trueos_hir_analysis_def_marker("check item type generic param complete", def_id);
     }
 
-    match tcx.def_kind(def_id) {
+    crate::trueos_hir_analysis_def_marker("check item type def kind begin", def_id);
+    let def_kind = tcx.def_kind(def_id);
+    crate::trueos_hir_analysis_def_marker("check item type def kind complete", def_id);
+    match def_kind {
         DefKind::Static { .. } => {
             tcx.ensure_ok().generics_of(def_id);
             tcx.ensure_ok().type_of(def_id);
@@ -818,11 +825,22 @@ pub(crate) fn check_item_type(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Result<(),
             return res;
         }
         DefKind::Fn => {
+            crate::trueos_hir_analysis_def_marker("check fn generics begin", def_id);
             tcx.ensure_ok().generics_of(def_id);
+            crate::trueos_hir_analysis_def_marker("check fn generics complete", def_id);
+            crate::trueos_hir_analysis_def_marker("check fn type begin", def_id);
             tcx.ensure_ok().type_of(def_id);
+            crate::trueos_hir_analysis_def_marker("check fn type complete", def_id);
+            crate::trueos_hir_analysis_def_marker("check fn predicates begin", def_id);
             tcx.ensure_ok().predicates_of(def_id);
+            crate::trueos_hir_analysis_def_marker("check fn predicates complete", def_id);
+            crate::trueos_hir_analysis_def_marker("check fn sig begin", def_id);
             tcx.ensure_ok().fn_sig(def_id);
+            crate::trueos_hir_analysis_def_marker("check fn sig complete", def_id);
+            crate::trueos_hir_analysis_def_marker("check fn codegen attrs begin", def_id);
             tcx.ensure_ok().codegen_fn_attrs(def_id);
+            crate::trueos_hir_analysis_def_marker("check fn codegen attrs complete", def_id);
+            crate::trueos_hir_analysis_def_marker("check fn intrinsic begin", def_id);
             if let Some(i) = tcx.intrinsic(def_id) {
                 intrinsic::check_intrinsic_type(
                     tcx,
@@ -831,6 +849,7 @@ pub(crate) fn check_item_type(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Result<(),
                     i.name,
                 )
             }
+            crate::trueos_hir_analysis_def_marker("check fn intrinsic complete", def_id);
         }
         DefKind::Impl { of_trait } => {
             tcx.ensure_ok().generics_of(def_id);
@@ -851,13 +870,30 @@ pub(crate) fn check_item_type(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Result<(),
             }
         }
         DefKind::Trait => {
+            crate::trueos_hir_analysis_def_marker("check trait generics begin", def_id);
             tcx.ensure_ok().generics_of(def_id);
+            crate::trueos_hir_analysis_def_marker("check trait generics complete", def_id);
+            crate::trueos_hir_analysis_def_marker("check trait def begin", def_id);
             tcx.ensure_ok().trait_def(def_id);
+            crate::trueos_hir_analysis_def_marker("check trait def complete", def_id);
+            crate::trueos_hir_analysis_def_marker(
+                "check trait super predicates begin",
+                def_id,
+            );
             tcx.ensure_ok().explicit_super_predicates_of(def_id);
+            crate::trueos_hir_analysis_def_marker(
+                "check trait super predicates complete",
+                def_id,
+            );
+            crate::trueos_hir_analysis_def_marker("check trait predicates begin", def_id);
             tcx.ensure_ok().predicates_of(def_id);
+            crate::trueos_hir_analysis_def_marker("check trait predicates complete", def_id);
+            crate::trueos_hir_analysis_def_marker("check trait associated items begin", def_id);
             tcx.ensure_ok().associated_items(def_id);
+            crate::trueos_hir_analysis_def_marker("check trait associated items complete", def_id);
             let assoc_items = tcx.associated_items(def_id);
 
+            crate::trueos_hir_analysis_def_marker("check trait assoc defaults begin", def_id);
             for &assoc_item in assoc_items.in_definition_order() {
                 match assoc_item.kind {
                     ty::AssocKind::Type { .. } if assoc_item.defaultness(tcx).has_value() => {
@@ -872,8 +908,13 @@ pub(crate) fn check_item_type(tcx: TyCtxt<'_>, def_id: LocalDefId) -> Result<(),
                     _ => {}
                 }
             }
+            crate::trueos_hir_analysis_def_marker("check trait assoc defaults complete", def_id);
+            crate::trueos_hir_analysis_def_marker("check trait wf begin", def_id);
             res = res.and(wfcheck::check_trait(tcx, def_id));
+            crate::trueos_hir_analysis_def_marker("check trait wf complete", def_id);
+            crate::trueos_hir_analysis_def_marker("check trait gat clauses begin", def_id);
             wfcheck::check_gat_where_clauses(tcx, def_id);
+            crate::trueos_hir_analysis_def_marker("check trait gat clauses complete", def_id);
             // Trait aliases do not have hir checks anymore
             return res;
         }

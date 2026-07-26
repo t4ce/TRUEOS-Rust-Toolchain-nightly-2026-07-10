@@ -23,6 +23,14 @@ use crate::target_features::{
     check_target_feature_trait_unsafe, check_tied_features, from_target_feature_attr,
 };
 
+#[inline]
+fn trueos_codegen_attrs_marker(stage: &'static str, did: LocalDefId) {
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc codegen-attrs: {stage} def={did:?}");
+    #[cfg(not(target_os = "trueos"))]
+    let _ = (stage, did);
+}
+
 /// In some cases, attributes are only valid on functions, but it's the `check_attr`
 /// pass that checks that they aren't used anywhere else, rather than this module.
 /// In these cases, we bail from performing further checks that are only meaningful for
@@ -63,12 +71,12 @@ fn process_builtin_attrs(
     codegen_fn_attrs: &mut CodegenFnAttrs,
 ) -> InterestingAttributeDiagnosticSpans {
     let mut interesting_spans = InterestingAttributeDiagnosticSpans::default();
-    let rust_target_features = tcx.rust_target_features(LOCAL_CRATE);
 
     let parsed_attrs = attrs
         .iter()
         .filter_map(|attr| if let hir::Attribute::Parsed(attr) = attr { Some(attr) } else { None });
     for attr in parsed_attrs {
+        trueos_codegen_attrs_marker("builtin attr begin", did);
         match attr {
             AttributeKind::Cold => codegen_fn_attrs.flags |= CodegenFnAttrFlags::COLD,
             AttributeKind::ExportName { name, .. } => codegen_fn_attrs.symbol_name = Some(*name),
@@ -92,15 +100,20 @@ fn process_builtin_attrs(
             AttributeKind::LinkSection { name } => codegen_fn_attrs.link_section = Some(*name),
             AttributeKind::NoMangle(attr_span) => {
                 interesting_spans.no_mangle = Some(*attr_span);
+                trueos_codegen_attrs_marker("no-mangle item name begin", did);
                 if tcx.opt_item_name(did.to_def_id()).is_some() {
                     codegen_fn_attrs.flags |= CodegenFnAttrFlags::NO_MANGLE;
                 } else {
                     tcx.dcx()
                         .span_delayed_bug(*attr_span, "no_mangle should be on a named function");
                 }
+                trueos_codegen_attrs_marker("no-mangle item name complete", did);
             }
             AttributeKind::Optimize(optimize, _) => codegen_fn_attrs.optimize = *optimize,
             AttributeKind::TargetFeature { features, attr_span, was_forced } => {
+                trueos_codegen_attrs_marker("target features begin", did);
+                let rust_target_features = tcx.rust_target_features(LOCAL_CRATE);
+                trueos_codegen_attrs_marker("target features complete", did);
                 let Some(sig) = tcx.hir_node_by_def_id(did).fn_sig() else {
                     tcx.dcx().span_delayed_bug(*attr_span, "target_feature applied to non-fn");
                     continue;
@@ -304,6 +317,7 @@ fn process_builtin_attrs(
             }
             _ => {}
         }
+        trueos_codegen_attrs_marker("builtin attr complete", did);
     }
 
     interesting_spans
@@ -321,9 +335,13 @@ fn apply_overrides(tcx: TyCtxt<'_>, did: LocalDefId, codegen_fn_attrs: &mut Code
     // Passed in sanitizer settings are always the default.
     assert!(codegen_fn_attrs.sanitizers == SanitizerFnAttrs::default());
     // Replace with #[sanitize] value
+    trueos_codegen_attrs_marker("sanitizer settings begin", did);
     codegen_fn_attrs.sanitizers = tcx.sanitizer_settings_for(did);
+    trueos_codegen_attrs_marker("sanitizer settings complete", did);
     // On trait methods, inherit the `#[align]` of the trait's method prototype.
+    trueos_codegen_attrs_marker("inherited align begin", did);
     codegen_fn_attrs.alignment = Ord::max(codegen_fn_attrs.alignment, tcx.inherited_align(did));
+    trueos_codegen_attrs_marker("inherited align complete", did);
 
     // naked function MUST NOT be inlined! This attribute is required for the rust compiler itself,
     // but not for the code generation backend because at that point the naked function will just be
@@ -345,6 +363,7 @@ fn apply_overrides(tcx: TyCtxt<'_>, did: LocalDefId, codegen_fn_attrs: &mut Code
     // its parent function, which effectively inherits the features anyway. Boxing this closure
     // would result in this closure being compiled without the inherited target features, but this
     // is probably a poor usage of `#[inline(always)]` and easily avoided by not using the attribute.
+    trueos_codegen_attrs_marker("closure inheritance begin", did);
     if tcx.is_closure_like(did.to_def_id()) && codegen_fn_attrs.inline != InlineAttr::Always {
         let owner_id = tcx.parent(did.to_def_id());
         if tcx.def_kind(owner_id).has_codegen_attrs() {
@@ -353,20 +372,26 @@ fn apply_overrides(tcx: TyCtxt<'_>, did: LocalDefId, codegen_fn_attrs: &mut Code
                 .extend(tcx.codegen_fn_attrs(owner_id).target_features.iter().copied());
         }
     }
+    trueos_codegen_attrs_marker("closure inheritance complete", did);
 
     // When `no_builtins` is applied at the crate level, we should add the
     // `no-builtins` attribute to each function to ensure it takes effect in LTO.
+    trueos_codegen_attrs_marker("crate no-builtins begin", did);
     let no_builtins = find_attr!(tcx, crate, NoBuiltins);
+    trueos_codegen_attrs_marker("crate no-builtins complete", did);
     if no_builtins {
         codegen_fn_attrs.flags |= CodegenFnAttrFlags::NO_BUILTINS;
     }
 
     // inherit track-caller properly
+    trueos_codegen_attrs_marker("track-caller inheritance begin", did);
     if tcx.should_inherit_track_caller(did) {
         codegen_fn_attrs.flags |= CodegenFnAttrFlags::TRACK_CALLER;
     }
+    trueos_codegen_attrs_marker("track-caller inheritance complete", did);
 
     // Foreign items by default use no mangling for their symbol name.
+    trueos_codegen_attrs_marker("foreign-item check begin", did);
     if tcx.is_foreign_item(did) {
         codegen_fn_attrs.flags |= CodegenFnAttrFlags::FOREIGN_ITEM;
 
@@ -394,6 +419,7 @@ fn apply_overrides(tcx: TyCtxt<'_>, did: LocalDefId, codegen_fn_attrs: &mut Code
             codegen_fn_attrs.flags |= CodegenFnAttrFlags::NO_MANGLE;
         }
     }
+    trueos_codegen_attrs_marker("foreign-item check complete", did);
 }
 
 #[derive(Diagnostic)]
@@ -566,6 +592,7 @@ fn handle_lang_items(
 ///   overrides come after applying built-in attributes since they may only apply when certain attributes were already set in the stage before.
 /// - check that the result is valid. There's various ways in which this may not be the case, such as certain combinations of attrs.
 fn codegen_fn_attrs(tcx: TyCtxt<'_>, did: LocalDefId) -> CodegenFnAttrs {
+    trueos_codegen_attrs_marker("provider begin", did);
     if cfg!(debug_assertions) {
         let def_kind = tcx.def_kind(did);
         assert!(
@@ -574,14 +601,27 @@ fn codegen_fn_attrs(tcx: TyCtxt<'_>, did: LocalDefId) -> CodegenFnAttrs {
         );
     }
 
+    trueos_codegen_attrs_marker("new result begin", did);
     let mut codegen_fn_attrs = CodegenFnAttrs::new();
+    trueos_codegen_attrs_marker("new result complete", did);
+    trueos_codegen_attrs_marker("hir attrs begin", did);
     let attrs = tcx.hir_attrs(tcx.local_def_id_to_hir_id(did));
+    trueos_codegen_attrs_marker("hir attrs complete", did);
 
+    trueos_codegen_attrs_marker("builtin attrs begin", did);
     let interesting_spans = process_builtin_attrs(tcx, did, attrs, &mut codegen_fn_attrs);
+    trueos_codegen_attrs_marker("builtin attrs complete", did);
+    trueos_codegen_attrs_marker("lang items begin", did);
     handle_lang_items(tcx, did, &interesting_spans, attrs, &mut codegen_fn_attrs);
+    trueos_codegen_attrs_marker("lang items complete", did);
+    trueos_codegen_attrs_marker("overrides begin", did);
     apply_overrides(tcx, did, &mut codegen_fn_attrs);
+    trueos_codegen_attrs_marker("overrides complete", did);
+    trueos_codegen_attrs_marker("result checks begin", did);
     check_result(tcx, did, interesting_spans, &codegen_fn_attrs);
+    trueos_codegen_attrs_marker("result checks complete", did);
 
+    trueos_codegen_attrs_marker("provider complete", did);
     codegen_fn_attrs
 }
 

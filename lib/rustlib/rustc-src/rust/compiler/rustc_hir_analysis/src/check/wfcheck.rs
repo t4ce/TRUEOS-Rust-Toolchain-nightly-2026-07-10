@@ -226,12 +226,20 @@ pub(super) fn check_well_formed(
     tcx: TyCtxt<'_>,
     def_id: LocalDefId,
 ) -> Result<(), ErrorGuaranteed> {
+    crate::trueos_hir_analysis_def_marker("wf item begin", def_id);
+    crate::trueos_hir_analysis_def_marker("wf item type begin", def_id);
     let mut res = crate::check::check::check_item_type(tcx, def_id);
+    crate::trueos_hir_analysis_def_marker("wf item type complete", def_id);
 
+    crate::trueos_hir_analysis_def_marker("wf item generics begin", def_id);
     for param in &tcx.generics_of(def_id).own_params {
+        crate::trueos_hir_analysis_def_marker("wf item param begin", def_id);
         res = res.and(check_param_wf(tcx, param));
+        crate::trueos_hir_analysis_def_marker("wf item param complete", def_id);
     }
+    crate::trueos_hir_analysis_def_marker("wf item generics complete", def_id);
 
+    crate::trueos_hir_analysis_def_marker("wf item complete", def_id);
     res
 }
 
@@ -2406,25 +2414,48 @@ impl<'tcx> WfCheckingCtxt<'_, 'tcx> {
 }
 
 pub(super) fn check_type_wf(tcx: TyCtxt<'_>, (): ()) -> Result<(), ErrorGuaranteed> {
+    crate::trueos_hir_analysis_marker("type wf crate items begin");
     let items = tcx.hir_crate_items(());
-    let res =
-        items
-            .par_items(|item| tcx.ensure_result().check_well_formed(item.owner_id.def_id))
-            .and(
-                items.par_impl_items(|item| {
-                    tcx.ensure_result().check_well_formed(item.owner_id.def_id)
-                }),
-            )
-            .and(items.par_trait_items(|item| {
-                tcx.ensure_result().check_well_formed(item.owner_id.def_id)
-            }))
-            .and(items.par_foreign_items(|item| {
-                tcx.ensure_result().check_well_formed(item.owner_id.def_id)
-            }))
-            .and(items.par_nested_bodies(|item| tcx.ensure_result().check_well_formed(item)))
-            .and(items.par_opaques(|item| tcx.ensure_result().check_well_formed(item)));
+    crate::trueos_hir_analysis_marker("type wf crate items complete");
 
+    crate::trueos_hir_analysis_marker("type wf items begin");
+    let mut res =
+        items.par_items(|item| tcx.ensure_result().check_well_formed(item.owner_id.def_id));
+    crate::trueos_hir_analysis_marker("type wf items complete");
+
+    crate::trueos_hir_analysis_marker("type wf impl items begin");
+    res = res.and(items.par_impl_items(|item| {
+        tcx.ensure_result().check_well_formed(item.owner_id.def_id)
+    }));
+    crate::trueos_hir_analysis_marker("type wf impl items complete");
+
+    crate::trueos_hir_analysis_marker("type wf trait items begin");
+    res = res.and(items.par_trait_items(|item| {
+        tcx.ensure_result().check_well_formed(item.owner_id.def_id)
+    }));
+    crate::trueos_hir_analysis_marker("type wf trait items complete");
+
+    crate::trueos_hir_analysis_marker("type wf foreign items begin");
+    res = res.and(items.par_foreign_items(|item| {
+        tcx.ensure_result().check_well_formed(item.owner_id.def_id)
+    }));
+    crate::trueos_hir_analysis_marker("type wf foreign items complete");
+
+    crate::trueos_hir_analysis_marker("type wf nested bodies begin");
+    res = res.and(items.par_nested_bodies(|item| {
+        tcx.ensure_result().check_well_formed(item)
+    }));
+    crate::trueos_hir_analysis_marker("type wf nested bodies complete");
+
+    crate::trueos_hir_analysis_marker("type wf opaques begin");
+    res = res.and(items.par_opaques(|item| {
+        tcx.ensure_result().check_well_formed(item)
+    }));
+    crate::trueos_hir_analysis_marker("type wf opaques complete");
+
+    crate::trueos_hir_analysis_marker("type wf entry begin");
     super::entry::check_for_entry_fn(tcx)?;
+    crate::trueos_hir_analysis_marker("type wf entry complete");
 
     res
 }

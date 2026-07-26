@@ -51,6 +51,14 @@ use tracing::{info, instrument};
 use crate::interface::Compiler;
 use crate::{diagnostics, limits, util};
 
+#[inline]
+fn trueos_analysis_marker(stage: &'static str) {
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc analysis: {stage}");
+    #[cfg(not(target_os = "trueos"))]
+    let _ = stage;
+}
+
 pub fn parse<'a>(sess: &'a Session) -> ast::Crate {
     let mut krate = sess
         .time("parse_crate", || {
@@ -1080,6 +1088,7 @@ pub fn emit_delayed_lints(tcx: TyCtxt<'_>) {
 /// Runs all analyses that we guarantee to run, even if errors were reported in earlier analyses.
 /// This function never fails.
 fn run_required_analyses(tcx: TyCtxt<'_>) {
+    trueos_analysis_marker("required begin");
     if tcx.sess.opts.unstable_opts.input_stats {
         rustc_passes::input_stats::print_hir_stats(tcx);
     }
@@ -1092,13 +1101,16 @@ fn run_required_analyses(tcx: TyCtxt<'_>) {
     // This is needed since the `hir_id_validator::check_crate` call above is not guaranteed
     // to use `hir_crate_items`.
     tcx.ensure_done().hir_crate_items(());
+    trueos_analysis_marker("hir crate items complete");
 
     rustc_passes::delegation::check_glob_and_list_delegations_target_expr(tcx);
+    trueos_analysis_marker("delegation checks complete");
 
     let sess = tcx.sess;
     sess.time("misc_checking_1", || {
         par_fns(&mut [
             &mut || {
+                trueos_analysis_marker("misc1 entry checks begin");
                 sess.time("looking_for_entry_point", || tcx.ensure_ok().entry_fn(()));
                 sess.time("check_externally_implementable_items", || {
                     tcx.ensure_ok().check_externally_implementable_items(())
@@ -1109,37 +1121,48 @@ fn run_required_analyses(tcx: TyCtxt<'_>) {
                 });
 
                 CStore::from_tcx(tcx).report_unused_deps(tcx);
+                trueos_analysis_marker("misc1 entry checks complete");
             },
             &mut || {
+                trueos_analysis_marker("misc1 export checks begin");
                 tcx.ensure_ok().exportable_items(LOCAL_CRATE);
                 tcx.ensure_ok().stable_order_of_exportable_impls(LOCAL_CRATE);
                 tcx.par_hir_for_each_module(|module| {
                     tcx.ensure_ok().check_mod_attrs(module);
                     tcx.ensure_ok().check_mod_unstable_api_usage(module);
                 });
+                trueos_analysis_marker("misc1 export checks complete");
             },
             &mut || {
+                trueos_analysis_marker("misc1 limits begin");
                 // We force these queries to run,
                 // since they might not otherwise get called.
                 // This marks the corresponding crate-level attributes
                 // as used, and ensures that their values are valid.
                 tcx.ensure_ok().limits(());
+                trueos_analysis_marker("misc1 limits complete");
             },
         ]);
     });
+    trueos_analysis_marker("misc1 complete");
 
     sess.time("emit_ast_lowering_delayed_lints", || {
         emit_delayed_lints(tcx);
     });
+    trueos_analysis_marker("delayed lints complete");
 
+    trueos_analysis_marker("hir analysis begin");
     rustc_hir_analysis::check_crate(tcx);
+    trueos_analysis_marker("hir analysis complete");
     // Freeze definitions as we don't add new ones at this point.
     // We need to wait until now since we synthesize a by-move body
     // for all coroutine-closures.
     //
     // This improves performance by allowing lock-free access to them.
     tcx.untracked().definitions.freeze();
+    trueos_analysis_marker("definitions frozen");
 
+    trueos_analysis_marker("mir checks begin");
     sess.time("MIR_borrow_checking", || {
         tcx.par_hir_body_owners(|def_id| {
             let not_typeck_child = !tcx.is_typeck_child(def_id.to_def_id());
@@ -1176,15 +1199,19 @@ fn run_required_analyses(tcx: TyCtxt<'_>) {
             }
         });
     });
+    trueos_analysis_marker("mir checks complete");
 
     sess.time("layout_testing", || layout_test::test_layout(tcx));
     sess.time("abi_testing", || abi_test::test_abi(tcx));
+    trueos_analysis_marker("required complete");
 }
 
 /// Runs the type-checking, region checking and other miscellaneous analysis
 /// passes on the crate.
 fn analysis(tcx: TyCtxt<'_>, (): ()) {
+    trueos_analysis_marker("begin");
     run_required_analyses(tcx);
+    trueos_analysis_marker("required analyses returned");
 
     let sess = tcx.sess;
 
@@ -1201,8 +1228,10 @@ fn analysis(tcx: TyCtxt<'_>, (): ()) {
     }
 
     sess.time("misc_checking_3", || {
+        trueos_analysis_marker("misc3 begin");
         par_fns(&mut [
             &mut || {
+                trueos_analysis_marker("misc3 visibility begin");
                 tcx.ensure_ok().effective_visibilities(());
 
                 par_fns(&mut [
@@ -1225,15 +1254,19 @@ fn analysis(tcx: TyCtxt<'_>, (): ()) {
                         tcx.ensure_ok().clashing_extern_declarations(());
                     },
                 ]);
+                trueos_analysis_marker("misc3 visibility complete");
             },
             &mut || {
+                trueos_analysis_marker("misc3 privacy begin");
                 sess.time("privacy_checking_modules", || {
                     tcx.par_hir_for_each_module(|module| {
                         tcx.ensure_ok().check_mod_privacy(module);
                     });
                 });
+                trueos_analysis_marker("misc3 privacy complete");
             },
         ]);
+        trueos_analysis_marker("misc3 parallel checks complete");
 
         // This check has to be run after all lints are done processing. We don't
         // define a lint filter, as all lint checks should have finished at this point.
@@ -1243,6 +1276,7 @@ fn analysis(tcx: TyCtxt<'_>, (): ()) {
         // diagnostic item. If the crate compiles without checking any diagnostic items,
         // we will fail to emit overlap diagnostics. Thus we invoke it here unconditionally.
         let _ = tcx.all_diagnostic_items(());
+        trueos_analysis_marker("misc3 complete");
     });
 
     // If `-Zvalidate-mir` is set, we also want to compute the final MIR for each item
@@ -1260,6 +1294,7 @@ fn analysis(tcx: TyCtxt<'_>, (): ()) {
             });
         });
     }
+    trueos_analysis_marker("complete");
 }
 
 /// Runs the codegen backend, after which the AST and analysis can

@@ -31,7 +31,7 @@ use rustc_target::asm::InlineAsmArch;
 use rustc_target::spec::{
     Arch, CfgAbi, CodeModel, DebuginfoKind, Os, PanicStrategy, RelocModel, RelroLevel,
     SanitizerSet, SmallDataThresholdSupport, SplitDebuginfo, StackProtector, SymbolVisibility,
-    Target, TargetTuple, TlsModel, apple,
+    Target, TargetTuple, TargetWarnings, TlsModel, apple,
 };
 
 use crate::code_stats::CodeStats;
@@ -1040,12 +1040,24 @@ pub fn build_session(
         dcx = dcx.with_msrv(msrv);
     }
 
-    let host_triple = TargetTuple::from_tuple(config::host_tuple());
     let (host, target_warnings) =
-        Target::search(&host_triple, sopts.sysroot.path(), sopts.unstable_opts.unstable_options)
+        if cfg!(target_os = "trueos") && sopts.target_triple.tuple() == config::host_tuple() {
+            // A native TrueOS compiler receives its target specification as an
+            // app-local JSON asset. It was already parsed into `target` before
+            // the compiler thread started, so reuse it instead of probing the
+            // filesystem for an identical host specification.
+            (target.clone(), TargetWarnings::empty())
+        } else {
+            let host_triple = TargetTuple::from_tuple(config::host_tuple());
+            Target::search(
+                &host_triple,
+                sopts.sysroot.path(),
+                sopts.unstable_opts.unstable_options,
+            )
             .unwrap_or_else(|e| {
                 dcx.handle().fatal(format!("Error loading host specification: {e}"))
-            });
+            })
+        };
     for warning in target_warnings.warning_messages() {
         dcx.handle().warn(warning)
     }

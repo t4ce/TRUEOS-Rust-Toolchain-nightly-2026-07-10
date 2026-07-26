@@ -86,6 +86,7 @@ pub use diagnostics::NoVariantNamed;
 use rustc_abi::{CVariadicStatus, ExternAbi};
 use rustc_hir as hir;
 use rustc_hir::def::DefKind;
+use rustc_hir::def_id::LocalDefId;
 use rustc_middle::mir::interpret::GlobalId;
 use rustc_middle::query::Providers;
 use rustc_middle::ty::{Const, Ty, TyCtxt};
@@ -96,6 +97,22 @@ use rustc_trait_selection::traits;
 
 pub use crate::collect::suggest_impl_trait;
 use crate::hir_ty_lowering::HirTyLowerer;
+
+#[inline]
+fn trueos_hir_analysis_marker(stage: &'static str) {
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc hir-analysis: {stage}");
+    #[cfg(not(target_os = "trueos"))]
+    let _ = stage;
+}
+
+#[inline]
+fn trueos_hir_analysis_def_marker(stage: &'static str, def_id: LocalDefId) {
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc hir-analysis: {stage} def={def_id:?}");
+    #[cfg(not(target_os = "trueos"))]
+    let _ = (stage, def_id);
+}
 
 fn check_c_variadic_abi(tcx: TyCtxt<'_>, decl: &hir::FnDecl<'_>, abi: ExternAbi, span: Span) {
     if !decl.c_variadic() {
@@ -149,24 +166,42 @@ pub fn provide(providers: &mut Providers) {
 
 pub fn check_crate(tcx: TyCtxt<'_>) {
     let _prof_timer = tcx.sess.timer("type_check_crate");
+    trueos_hir_analysis_marker("check crate begin");
 
     tcx.sess.time("coherence_checking", || {
+        trueos_hir_analysis_marker("coherence begin");
         // When discarding query call results, use an explicit type to indicate
         // what we are intending to discard, to help future type-based refactoring.
         type R = Result<(), ErrorGuaranteed>;
 
+        trueos_hir_analysis_marker("type wf begin");
         let _: R = tcx.ensure_result().check_type_wf(());
+        trueos_hir_analysis_marker("type wf complete");
 
+        trueos_hir_analysis_marker("coherent traits begin");
         for &trait_def_id in tcx.all_local_trait_impls(()).keys() {
             let _: R = tcx.ensure_result().coherent_trait(trait_def_id);
         }
+        trueos_hir_analysis_marker("coherent traits complete");
         // these queries are executed for side-effects (error reporting):
+        trueos_hir_analysis_marker("inherent validity begin");
         let _: R = tcx.ensure_result().crate_inherent_impls_validity_check(());
+        trueos_hir_analysis_marker("inherent validity complete");
+        trueos_hir_analysis_marker("inherent overlap begin");
         let _: R = tcx.ensure_result().crate_inherent_impls_overlap_check(());
+        trueos_hir_analysis_marker("inherent overlap complete");
     });
+    trueos_hir_analysis_marker("coherence complete");
 
+    trueos_hir_analysis_marker("body owners begin");
     tcx.par_hir_body_owners(|item_def_id| {
         let def_kind = tcx.def_kind(item_def_id);
+        #[cfg(target_os = "trueos")]
+        std::println!(
+            "TRUEOS rustc hir-analysis: body owner begin def={:?} kind={:?}",
+            item_def_id,
+            def_kind
+        );
         // Make sure we evaluate all static and (non-associated) const items, even if unused.
         // If any of these fail to evaluate, we do not want this crate to pass compilation.
         match def_kind {
@@ -194,16 +229,22 @@ pub fn check_crate(tcx: TyCtxt<'_>) {
             || def_kind == DefKind::InlineConst && tcx.is_type_system_inline_const(item_def_id)
             || tcx.is_typeck_child(item_def_id.to_def_id()))
         {
+            trueos_hir_analysis_marker("body typeck begin");
             tcx.ensure_ok().typeck(item_def_id);
+            trueos_hir_analysis_marker("body typeck complete");
         }
         // Ensure we generate the new `DefId` before finishing `check_crate`.
         // Afterwards we freeze the list of `DefId`s.
+        trueos_hir_analysis_marker("body coroutine check begin");
         if tcx.needs_coroutine_by_move_body_def_id(item_def_id.to_def_id()) {
             tcx.ensure_done().coroutine_by_move_body_def_id(item_def_id);
         }
+        trueos_hir_analysis_marker("body owner complete");
     });
+    trueos_hir_analysis_marker("body owners complete");
 
     if tcx.features().rustc_attrs() {
+        trueos_hir_analysis_marker("rustc attr dumps begin");
         tcx.sess.time("dumping_rustc_attr_data", || {
             outlives::dump::inferred_outlives(tcx);
             variance::dump::variances(tcx);
@@ -213,9 +254,12 @@ pub fn check_crate(tcx: TyCtxt<'_>) {
             collect::dump::def_parents(tcx);
             collect::dump::vtables(tcx);
         });
+        trueos_hir_analysis_marker("rustc attr dumps complete");
     }
 
+    trueos_hir_analysis_marker("unused traits begin");
     tcx.ensure_ok().check_unused_traits(());
+    trueos_hir_analysis_marker("check crate complete");
 }
 
 /// Lower a [`hir::Ty`] to a [`Ty`].

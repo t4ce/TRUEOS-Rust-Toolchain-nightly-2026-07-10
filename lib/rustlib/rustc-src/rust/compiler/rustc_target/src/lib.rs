@@ -39,6 +39,14 @@ pub fn relative_target_rustlib_path(sysroot: &Path, target_triple: &str) -> Path
 }
 
 /// The name of the directory rustc expects libraries to be located.
+#[cfg(target_os = "trueos")]
+fn find_relative_libdir(_sysroot: &Path) -> std::borrow::Cow<'static, str> {
+    // Blueprint sysroots always use `lib/rustlib`. Avoid probing the
+    // mounted app filesystem for Linux-style `lib64`/`lib32` layouts.
+    "lib".into()
+}
+
+#[cfg(not(target_os = "trueos"))]
 fn find_relative_libdir(sysroot: &Path) -> std::borrow::Cow<'static, str> {
     // FIXME: This is a quick hack to make the rustc binary able to locate
     // Rust libraries in Linux environments where libraries might be installed
