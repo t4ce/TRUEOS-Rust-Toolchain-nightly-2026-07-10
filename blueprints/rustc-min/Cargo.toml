@@ -7,6 +7,7 @@ edition = "2024"
 profile = "release"
 rustc-tier = "min"
 rustc-workers = 1
+rustc-payload-dependencies = ["trueos"]
 
 [dependencies]
 # This package intentionally targets the exact archived compiler source.

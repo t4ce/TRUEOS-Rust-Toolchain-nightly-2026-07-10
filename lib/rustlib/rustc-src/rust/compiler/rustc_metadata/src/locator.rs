@@ -321,7 +321,12 @@ impl<'a> CrateLocator<'a> {
             metadata_loader,
             cfg_version: sess.cfg_version,
             crate_name,
-            exact_paths: if hash.is_none() {
+            // TRUEOS Blueprints materialize an authenticated, manifest-backed
+            // crate closure without relying on directory enumeration. The
+            // wrapper supplies every candidate as an exact `--extern` path, so
+            // hashed transitive dependencies must be allowed to select from
+            // that set as well.
+            exact_paths: if hash.is_none() || sess.target.os.desc() == "trueos" {
                 sess.opts
                     .externs
                     .get(crate_name.as_str())
@@ -330,8 +335,8 @@ impl<'a> CrateLocator<'a> {
                     .cloned()
                     .collect()
             } else {
-                // SVH being specified means this is a transitive dependency,
-                // so `--extern` options do not apply.
+                // On conventional targets an SVH means this is a transitive
+                // dependency, so `--extern` options do not apply.
                 Vec::new()
             },
             hash,
