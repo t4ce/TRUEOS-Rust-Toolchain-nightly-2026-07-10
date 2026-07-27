@@ -694,6 +694,8 @@ pub fn codegen_crate<
     backend: B,
     tcx: TyCtxt<'_>,
 ) -> OngoingCodegen<B> {
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc codegen-base: crate entry");
     if tcx.sess.target.need_explicit_cpu && tcx.sess.opts.cg.target_cpu.is_none() {
         // The target has no default cpu, but none is set explicitly
         tcx.dcx().emit_fatal(errors::CpuRequired);
@@ -710,7 +712,14 @@ pub fn codegen_crate<
 
     // Run the monomorphization collector and partition the collected items into
     // codegen units.
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc codegen-base: collect mono items begin");
     let MonoItemPartitions { codegen_units, .. } = tcx.collect_and_partition_mono_items(());
+    #[cfg(target_os = "trueos")]
+    println!(
+        "TRUEOS rustc codegen-base: collect mono items complete cgus={}",
+        codegen_units.len()
+    );
 
     // Force all codegen_unit queries so they are already either red or green
     // when compile_codegen_unit accesses them. We are not able to re-execute
@@ -724,6 +733,8 @@ pub fn codegen_crate<
     }
 
     // Codegen an allocator shim, if necessary.
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc codegen-base: allocator module begin");
     let allocator_module = if let Some(kind) = allocator_kind_for_codegen(tcx) {
         let llmod_id =
             cgu_name_builder.build_cgu_name(LOCAL_CRATE, &["crate"], Some("allocator")).to_string();
@@ -736,8 +747,17 @@ pub fn codegen_crate<
     } else {
         None
     };
+    #[cfg(target_os = "trueos")]
+    println!(
+        "TRUEOS rustc codegen-base: allocator module complete present={}",
+        allocator_module.is_some()
+    );
 
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc codegen-base: async coordinator begin");
     let ongoing_codegen = start_async_codegen(backend.clone(), tcx, allocator_module);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc codegen-base: async coordinator ready");
 
     // For better throughput during parallel processing by LLVM, we used to sort
     // CGUs largest to smallest. This would lead to better thread utilization
@@ -757,11 +777,20 @@ pub fn codegen_crate<
         let (first_half, second_half) = sorted_cgus.split_at(sorted_cgus.len() / 2);
         first_half.iter().interleave(second_half.iter().rev()).copied().collect()
     };
+    #[cfg(target_os = "trueos")]
+    println!(
+        "TRUEOS rustc codegen-base: cgu order ready count={}",
+        codegen_units.len()
+    );
 
     // Calculate the CGU reuse
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc codegen-base: cgu reuse begin");
     let cgu_reuse = tcx.sess.time("find_cgu_reuse", || {
         codegen_units.iter().map(|cgu| determine_cgu_reuse(tcx, cgu)).collect::<Vec<_>>()
     });
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc codegen-base: cgu reuse complete");
 
     crate::assert_module_sources::assert_module_sources(tcx, &|cgu_reuse_tracker| {
         for (i, cgu) in codegen_units.iter().enumerate() {
@@ -810,7 +839,17 @@ pub fn codegen_crate<
     };
 
     for (i, cgu) in codegen_units.iter().enumerate() {
+        #[cfg(target_os = "trueos")]
+        println!(
+            "TRUEOS rustc codegen-base: cgu wait begin index={i} name={}",
+            cgu.name()
+        );
         ongoing_codegen.wait_for_signal_to_codegen_item();
+        #[cfg(target_os = "trueos")]
+        println!(
+            "TRUEOS rustc codegen-base: cgu wait complete index={i} name={}",
+            cgu.name()
+        );
         ongoing_codegen.check_for_errors(tcx.sess);
 
         let cgu_reuse = cgu_reuse[i];
@@ -821,7 +860,17 @@ pub fn codegen_crate<
                     cgu.0
                 } else {
                     let start_time = Instant::now();
+                    #[cfg(target_os = "trueos")]
+                    println!(
+                        "TRUEOS rustc codegen-base: compile cgu begin index={i} name={}",
+                        cgu.name()
+                    );
                     let module = backend.compile_codegen_unit(tcx, cgu.name());
+                    #[cfg(target_os = "trueos")]
+                    println!(
+                        "TRUEOS rustc codegen-base: compile cgu complete index={i} name={}",
+                        cgu.name()
+                    );
                     total_codegen_time += start_time.elapsed();
                     module
                 };
@@ -831,6 +880,11 @@ pub fn codegen_crate<
                 tcx.dcx().abort_if_errors();
 
                 submit_codegened_module_to_llvm(&ongoing_codegen.coordinator, module, cost);
+                #[cfg(target_os = "trueos")]
+                println!(
+                    "TRUEOS rustc codegen-base: cgu submitted index={i} name={}",
+                    cgu.name()
+                );
             }
             CguReuse::PreLto => {
                 submit_pre_lto_module_to_llvm(
@@ -854,7 +908,11 @@ pub fn codegen_crate<
         }
     }
 
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc codegen-base: finish handshake begin");
     ongoing_codegen.codegen_finished(tcx);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc codegen-base: finish handshake complete");
 
     // Since the main thread is sometimes blocked during codegen, we keep track
     // -Ztime-passes output manually.

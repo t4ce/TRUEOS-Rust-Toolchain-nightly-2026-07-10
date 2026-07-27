@@ -23,7 +23,19 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         // this is the only place in mir building that we need to truly need to worry about
         // infinite recursion. Everything else does recurse, too, but it always gets broken up
         // at some point by inserting an intermediate temporary
-        ensure_sufficient_stack(|| self.as_temp_inner(block, temp_lifetime, expr_id, mutability))
+        #[cfg(target_os = "trueos")]
+        std::println!(
+            "TRUEOS rustc mir-expr: temp begin def={:?} expr={expr_id:?}",
+            self.def_id,
+        );
+        let result =
+            ensure_sufficient_stack(|| self.as_temp_inner(block, temp_lifetime, expr_id, mutability));
+        #[cfg(target_os = "trueos")]
+        std::println!(
+            "TRUEOS rustc mir-expr: temp complete def={:?} expr={expr_id:?}",
+            self.def_id,
+        );
+        result
     }
 
     #[instrument(skip(self), level = "debug")]
@@ -37,6 +49,12 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         let this = self; // See "LET_THIS_SELF".
 
         let expr = &this.thir[expr_id];
+        #[cfg(target_os = "trueos")]
+        std::println!(
+            "TRUEOS rustc mir-expr: temp inner begin def={:?} expr={expr_id:?} kind={:?}",
+            this.def_id,
+            core::mem::discriminant(&expr.kind),
+        );
         let expr_span = expr.span;
         let source_info = this.source_info(expr_span);
         if let ExprKind::Scope { region_scope, hir_id, value } = expr.kind {
@@ -90,6 +108,11 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
             **local_decl.local_info.as_mut().unwrap_crate_local() = local_info;
             this.local_decls.push(local_decl)
         };
+        #[cfg(target_os = "trueos")]
+        std::println!(
+            "TRUEOS rustc mir-expr: temp local ready def={:?} expr={expr_id:?} temp={temp:?}",
+            this.def_id,
+        );
         debug!(?temp);
         if deduplicate_temps {
             this.fixed_temps.insert(expr_id, temp);
@@ -125,7 +148,17 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
             }
         }
 
+        #[cfg(target_os = "trueos")]
+        std::println!(
+            "TRUEOS rustc mir-expr: temp destination begin def={:?} expr={expr_id:?}",
+            this.def_id,
+        );
         block = this.expr_into_dest(temp_place, block, expr_id).into_block();
+        #[cfg(target_os = "trueos")]
+        std::println!(
+            "TRUEOS rustc mir-expr: temp destination complete def={:?} expr={expr_id:?}",
+            this.def_id,
+        );
 
         if let Some(temp_lifetime) = temp_lifetime.temp_lifetime {
             this.schedule_drop_value(expr_span, temp_lifetime, temp);
@@ -135,6 +168,11 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
             this.schedule_backwards_incompatible_drop(expr_span, backwards_incompatible, temp);
         }
 
+        #[cfg(target_os = "trueos")]
+        std::println!(
+            "TRUEOS rustc mir-expr: temp inner complete def={:?} expr={expr_id:?}",
+            this.def_id,
+        );
         block.and(temp)
     }
 }

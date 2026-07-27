@@ -123,6 +123,12 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         let this = self; // See "LET_THIS_SELF".
 
         let expr = &this.thir[expr_id];
+        #[cfg(target_os = "trueos")]
+        std::println!(
+            "TRUEOS rustc mir-expr: operand begin def={:?} expr={expr_id:?} kind={:?}",
+            this.def_id,
+            core::mem::discriminant(&expr.kind),
+        );
         if let ExprKind::Scope { region_scope, hir_id, value } = expr.kind {
             let source_info = this.source_info(expr.span);
             let region_scope = (region_scope, source_info);
@@ -132,8 +138,13 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         }
 
         let category = Category::of(&expr.kind).unwrap();
+        #[cfg(target_os = "trueos")]
+        std::println!(
+            "TRUEOS rustc mir-expr: operand category ready def={:?} expr={expr_id:?} category={category:?}",
+            this.def_id,
+        );
         debug!(?category, ?expr.kind);
-        match category {
+        let result = match category {
             Category::Constant
                 if matches!(needs_temporary, NeedsTemporary::No)
                     || !expr.ty.needs_drop(this.tcx, this.typing_env()) =>
@@ -153,7 +164,13 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                 }
                 block.and(Operand::Move(Place::from(operand)))
             }
-        }
+        };
+        #[cfg(target_os = "trueos")]
+        std::println!(
+            "TRUEOS rustc mir-expr: operand complete def={:?} expr={expr_id:?}",
+            this.def_id,
+        );
+        result
     }
 
     pub(crate) fn as_call_operand(
@@ -164,6 +181,12 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
     ) -> BlockAnd<Operand<'tcx>> {
         let this = self; // See "LET_THIS_SELF".
         let expr = &this.thir[expr_id];
+        #[cfg(target_os = "trueos")]
+        std::println!(
+            "TRUEOS rustc mir-expr: call operand begin def={:?} expr={expr_id:?} kind={:?}",
+            this.def_id,
+            core::mem::discriminant(&expr.kind),
+        );
         debug!("as_call_operand(block={:?}, expr={:?})", block, expr);
 
         if let ExprKind::Scope { region_scope, hir_id, value } = expr.kind {
@@ -199,6 +222,13 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
             }
         }
 
-        this.as_operand(block, scope, expr_id, LocalInfo::Boring, NeedsTemporary::Maybe)
+        let result =
+            this.as_operand(block, scope, expr_id, LocalInfo::Boring, NeedsTemporary::Maybe);
+        #[cfg(target_os = "trueos")]
+        std::println!(
+            "TRUEOS rustc mir-expr: call operand complete def={:?} expr={expr_id:?}",
+            this.def_id,
+        );
+        result
     }
 }

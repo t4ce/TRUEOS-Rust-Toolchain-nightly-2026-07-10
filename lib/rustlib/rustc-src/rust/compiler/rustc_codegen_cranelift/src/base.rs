@@ -39,12 +39,28 @@ pub(crate) fn codegen_fn<'tcx>(
     module: &mut dyn Module,
     instance: Instance<'tcx>,
 ) -> CodegenedFunction {
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: entry cgu={cgu_name}");
     debug_assert!(!instance.args.has_infer());
 
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: symbol query begin cgu={cgu_name}");
     let symbol_name = tcx.symbol_name(instance).name.to_string();
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: symbol query complete symbol={symbol_name}");
     let _timer = tcx.prof.generic_activity_with_arg("codegen fn", &*symbol_name);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: profiler guard ready symbol={symbol_name}");
 
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: instance mir begin symbol={symbol_name}");
     let mir = tcx.instance_mir(instance.def);
+    #[cfg(target_os = "trueos")]
+    println!(
+        "TRUEOS rustc cranelift-fn: instance mir complete symbol={symbol_name} blocks={} locals={}",
+        mir.basic_blocks.len(),
+        mir.local_decls.len()
+    );
     let _mir_guard = crate::PrintOnPanic(|| {
         let mut buf = Vec::new();
         with_no_trimmed_paths!({
@@ -53,12 +69,29 @@ pub(crate) fn codegen_fn<'tcx>(
         });
         String::from_utf8_lossy(&buf).into_owned()
     });
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: panic guard ready symbol={symbol_name}");
 
     // Declare function
-    let sig = get_function_sig(tcx, module.target_config().default_call_conv, instance);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: target config begin symbol={symbol_name}");
+    let default_call_conv = module.target_config().default_call_conv;
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: target config complete symbol={symbol_name}");
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: signature begin symbol={symbol_name}");
+    let sig = get_function_sig(tcx, default_call_conv, instance);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: signature complete symbol={symbol_name}");
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: declare function begin symbol={symbol_name}");
     let func_id = module.declare_function(&symbol_name, Linkage::Local, &sig).unwrap();
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: declare function complete symbol={symbol_name}");
 
     // Make the FunctionBuilder
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: builder context begin symbol={symbol_name}");
     let mut func_ctx = FunctionBuilderContext::new();
     let mut func = cached_func;
     func.clear();
@@ -67,29 +100,51 @@ pub(crate) fn codegen_fn<'tcx>(
     if debug_context.is_some() {
         func.collect_debug_info();
     }
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: builder context complete symbol={symbol_name}");
 
     let mut bcx = FunctionBuilder::new(&mut func, &mut func_ctx);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: function builder ready symbol={symbol_name}");
 
     // Predefine blocks
     let start_block = bcx.create_block();
     let block_map: IndexVec<BasicBlock, Block> =
         (0..mir.basic_blocks.len()).map(|_| bcx.create_block()).collect();
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: blocks ready symbol={symbol_name}");
 
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: fn abi begin symbol={symbol_name}");
     let fn_abi = FullyMonomorphizedLayoutCx(tcx).fn_abi_of_instance(instance, ty::List::empty());
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: fn abi complete symbol={symbol_name}");
 
     // Make FunctionCx
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: function context config begin symbol={symbol_name}");
     let target_config = module.target_config();
     let pointer_type = target_config.pointer_type();
     assert_eq!(pointer_ty(tcx), pointer_type);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: comments begin symbol={symbol_name}");
     let clif_comments = crate::pretty_clif::CommentWriter::new(tcx, instance, fn_abi);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: comments complete symbol={symbol_name}");
 
     let func_debug_cx = if let Some(debug_context) = debug_context.as_deref_mut() {
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc cranelift-fn: debug function begin symbol={symbol_name}");
         Some(debug_context.define_function(tcx, type_dbg, instance, fn_abi, &symbol_name, mir.span))
     } else {
         None
     };
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: debug function complete symbol={symbol_name}");
 
     let exception_slot = bcx.declare_var(pointer_type);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: exception slot ready symbol={symbol_name}");
 
     let mut fx = FunctionCx {
         module,
@@ -116,10 +171,22 @@ pub(crate) fn codegen_fn<'tcx>(
         inline_asm: String::new(),
         inline_asm_index: 0,
     };
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: function context ready symbol={}", fx.symbol_name);
 
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: body begin symbol={}", fx.symbol_name);
     tcx.prof.generic_activity("codegen clif ir").run(|| codegen_fn_body(&mut fx, start_block));
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: body complete symbol={}", fx.symbol_name);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: seal blocks begin symbol={}", fx.symbol_name);
     fx.bcx.seal_all_blocks();
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: seal blocks complete symbol={}", fx.symbol_name);
     fx.bcx.finalize();
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: builder finalize complete symbol={}", fx.symbol_name);
 
     // Recover all necessary data from fx, before accessing func will prevent future access to it.
     let symbol_name = fx.symbol_name;
@@ -127,7 +194,11 @@ pub(crate) fn codegen_fn<'tcx>(
     let func_debug_cx = fx.func_debug_cx;
     let inline_asm = fx.inline_asm;
 
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: constants finalize begin symbol={symbol_name}");
     fx.constants_cx.finalize(fx.tcx, &mut *fx.module);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: constants finalize complete symbol={symbol_name}");
 
     if crate::pretty_clif::should_write_ir(tcx.sess) {
         crate::pretty_clif::write_clif_file(
@@ -141,7 +212,11 @@ pub(crate) fn codegen_fn<'tcx>(
     }
 
     // Verify function
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: verify begin symbol={symbol_name}");
     verify_func(tcx, &clif_comments, &func);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-fn: verify complete symbol={symbol_name}");
 
     CodegenedFunction { symbol_name, func_id, func, clif_comments, func_debug_cx, inline_asm }
 }
@@ -281,24 +356,47 @@ fn verify_func(tcx: TyCtxt<'_>, writer: &crate::pretty_clif::CommentWriter, func
 }
 
 fn codegen_fn_body(fx: &mut FunctionCx<'_, '_, '_>, start_block: Block) {
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-body: entry symbol={}", fx.symbol_name);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-body: argument layouts begin symbol={}", fx.symbol_name);
     let arg_uninhabited = fx
         .mir
         .args_iter()
         .any(|arg| fx.layout_of(fx.monomorphize(fx.mir.local_decls[arg].ty)).is_uninhabited());
+    #[cfg(target_os = "trueos")]
+    println!(
+        "TRUEOS rustc cranelift-body: argument layouts complete symbol={} uninhabited={arg_uninhabited}",
+        fx.symbol_name
+    );
     if arg_uninhabited {
         fx.bcx.append_block_params_for_function_params(fx.block_map[START_BLOCK]);
         fx.bcx.switch_to_block(fx.block_map[START_BLOCK]);
         fx.bcx.ins().trap(TrapCode::user(1 /* unreachable */).unwrap());
         return;
     }
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-body: prelude begin symbol={}", fx.symbol_name);
     fx.tcx
         .prof
         .generic_activity("codegen prelude")
         .run(|| crate::abi::codegen_fn_prelude(fx, start_block));
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-body: prelude complete symbol={}", fx.symbol_name);
 
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-body: reachable blocks begin symbol={}", fx.symbol_name);
     let reachable_blocks = traversal::mono_reachable_as_bitset(fx.mir, fx.tcx, fx.instance);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-body: reachable blocks complete symbol={}", fx.symbol_name);
 
     for (bb, bb_data) in fx.mir.basic_blocks.iter_enumerated() {
+        #[cfg(target_os = "trueos")]
+        println!(
+            "TRUEOS rustc cranelift-body: block begin symbol={} bb={}",
+            fx.symbol_name,
+            bb.index()
+        );
         let block = fx.get_block(bb);
         fx.bcx.switch_to_block(block);
 
@@ -318,9 +416,21 @@ fn codegen_fn_body(fx: &mut FunctionCx<'_, '_, '_>, start_block: Block) {
         }
 
         fx.bcx.ins().nop();
-        for stmt in &bb_data.statements {
+        for (statement_index, stmt) in bb_data.statements.iter().enumerate() {
+            #[cfg(target_os = "trueos")]
+            println!(
+                "TRUEOS rustc cranelift-body: statement begin symbol={} bb={} index={statement_index}",
+                fx.symbol_name,
+                bb.index()
+            );
             fx.set_debug_loc(stmt.source_info);
             codegen_stmt(fx, block, stmt);
+            #[cfg(target_os = "trueos")]
+            println!(
+                "TRUEOS rustc cranelift-body: statement complete symbol={} bb={} index={statement_index}",
+                fx.symbol_name,
+                bb.index()
+            );
         }
 
         if fx.clif_comments.enabled() {
@@ -337,6 +447,13 @@ fn codegen_fn_body(fx: &mut FunctionCx<'_, '_, '_>, start_block: Block) {
 
         let _print_guard =
             crate::PrintOnPanic(|| format!("terminator {:?}", bb_data.terminator().kind));
+        #[cfg(target_os = "trueos")]
+        println!(
+            "TRUEOS rustc cranelift-body: terminator begin symbol={} bb={} kind={:?}",
+            fx.symbol_name,
+            bb.index(),
+            core::mem::discriminant(&bb_data.terminator().kind)
+        );
 
         match &bb_data.terminator().kind {
             TerminatorKind::Goto { target } => {
@@ -513,6 +630,12 @@ fn codegen_fn_body(fx: &mut FunctionCx<'_, '_, '_>, start_block: Block) {
                 unwind,
                 call_source: _,
             } => {
+                #[cfg(target_os = "trueos")]
+                println!(
+                    "TRUEOS rustc cranelift-body: call begin symbol={} bb={}",
+                    fx.symbol_name,
+                    bb.index()
+                );
                 fx.tcx.prof.generic_activity("codegen call").run(|| {
                     crate::abi::codegen_terminator_call(
                         fx,
@@ -524,6 +647,12 @@ fn codegen_fn_body(fx: &mut FunctionCx<'_, '_, '_>, start_block: Block) {
                         *unwind,
                     )
                 });
+                #[cfg(target_os = "trueos")]
+                println!(
+                    "TRUEOS rustc cranelift-body: call complete symbol={} bb={}",
+                    fx.symbol_name,
+                    bb.index()
+                );
             }
             // FIXME(explicit_tail_calls): add support for tail calls to the cranelift backend, once cranelift supports tail calls
             TerminatorKind::TailCall { fn_span, .. } => span_bug!(
@@ -602,6 +731,8 @@ fn codegen_fn_body(fx: &mut FunctionCx<'_, '_, '_>, start_block: Block) {
             }
         };
     }
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-body: complete symbol={}", fx.symbol_name);
 }
 
 fn codegen_stmt<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, cur_block: Block, stmt: &Statement<'tcx>) {

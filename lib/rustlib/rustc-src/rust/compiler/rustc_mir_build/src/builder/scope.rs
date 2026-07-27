@@ -544,6 +544,8 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
     where
         F: FnOnce(&mut Builder<'a, 'tcx>) -> Option<BlockAnd<()>>,
     {
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-scope: breakable begin def={:?}", self.def_id);
         let region_scope = self.scopes.topmost();
         let scope = BreakableScope {
             region_scope,
@@ -552,7 +554,11 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
             continue_drops: loop_block.map(|_| DropTree::new()),
         };
         self.scopes.breakable_scopes.push(scope);
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-scope: breakable body begin def={:?}", self.def_id);
         let normal_exit_block = f(self);
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-scope: breakable body complete def={:?}", self.def_id);
         let breakable_scope = self.scopes.breakable_scopes.pop().unwrap();
         assert!(breakable_scope.region_scope == region_scope);
         let break_block =
@@ -560,7 +566,9 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         if let Some(drops) = breakable_scope.continue_drops {
             self.build_exit_tree(drops, region_scope, span, loop_block);
         }
-        match (normal_exit_block, break_block) {
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-scope: breakable exit tree ready def={:?}", self.def_id);
+        let result = match (normal_exit_block, break_block) {
             (Some(block), None) | (None, Some(block)) => block,
             (None, None) => self.cfg.start_new_block().unit(),
             (Some(normal_block), Some(exit_block)) => {
@@ -578,7 +586,10 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                 );
                 target.unit()
             }
-        }
+        };
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-scope: breakable complete def={:?}", self.def_id);
+        result
     }
 
     /// Start a const-continuable scope, which tracks where `#[const_continue] break` should
@@ -688,18 +699,30 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
     where
         F: FnOnce(&mut Builder<'a, 'tcx>) -> BlockAnd<R>,
     {
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-scope: enter begin def={:?}", self.def_id);
         let source_scope = self.source_scope;
         if let LintLevel::Explicit(current_hir_id) = lint_level {
             let parent_id =
                 self.source_scopes[source_scope].local_data.as_ref().unwrap_crate_local().lint_root;
             self.maybe_new_source_scope(source_info.span, current_hir_id, parent_id);
         }
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-scope: push begin def={:?}", self.def_id);
         self.push_scope(region_scope);
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-scope: body begin def={:?}", self.def_id);
         let mut block;
         let rv = unpack!(block = f(self));
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-scope: body complete def={:?}", self.def_id);
         block = self.pop_scope(region_scope, block).into_block();
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-scope: pop complete def={:?}", self.def_id);
         self.source_scope = source_scope;
         debug!(?block);
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-scope: enter complete def={:?}", self.def_id);
         block.and(rv)
     }
 

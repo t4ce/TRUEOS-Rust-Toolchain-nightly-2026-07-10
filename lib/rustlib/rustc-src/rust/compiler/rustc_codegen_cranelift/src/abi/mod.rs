@@ -91,11 +91,17 @@ pub(crate) fn get_function_sig<'tcx>(
     inst: Instance<'tcx>,
 ) -> Signature {
     assert!(!inst.args.has_infer());
-    clif_sig_from_fn_abi(
-        tcx,
-        default_call_conv,
-        FullyMonomorphizedLayoutCx(tcx).fn_abi_of_instance(inst, ty::List::empty()),
-    )
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-signature: fn abi begin");
+    let fn_abi = FullyMonomorphizedLayoutCx(tcx).fn_abi_of_instance(inst, ty::List::empty());
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-signature: fn abi complete");
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-signature: clif conversion begin");
+    let signature = clif_sig_from_fn_abi(tcx, default_call_conv, fn_abi);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-signature: clif conversion complete");
+    signature
 }
 
 /// Instance must be monomorphized
@@ -235,18 +241,30 @@ fn make_local_place<'tcx>(
 }
 
 pub(crate) fn codegen_fn_prelude<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, start_block: Block) {
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-prelude: entry symbol={}", fx.symbol_name);
     fx.bcx.append_block_params_for_function_params(start_block);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-prelude: block params ready symbol={}", fx.symbol_name);
 
     fx.bcx.switch_to_block(start_block);
     fx.bcx.ins().nop();
 
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-prelude: ssa analysis begin symbol={}", fx.symbol_name);
     let ssa_analyzed = crate::analyze::analyze(fx);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-prelude: ssa analysis complete symbol={}", fx.symbol_name);
 
     self::comments::add_args_header_comment(fx);
 
     let mut block_params_iter = fx.bcx.func.dfg.block_params(start_block).to_vec().into_iter();
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-prelude: return place begin symbol={}", fx.symbol_name);
     let ret_place =
         self::returning::codegen_return_param(fx, &ssa_analyzed, &mut block_params_iter);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-prelude: return place complete symbol={}", fx.symbol_name);
     assert_eq!(fx.local_map.push(ret_place), RETURN_PLACE);
 
     // None means pass_mode == NoPass
@@ -265,6 +283,8 @@ pub(crate) fn codegen_fn_prelude<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, start_
 
     let mut arg_abis_iter = fx.fn_abi.args.iter();
 
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-prelude: function params begin symbol={}", fx.symbol_name);
     let func_params = fx
         .mir
         .args_iter()
@@ -301,8 +321,12 @@ pub(crate) fn codegen_fn_prelude<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, start_
             }
         })
         .collect::<Vec<(Local, ArgKind<'tcx>, Ty<'tcx>)>>();
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-prelude: function params complete symbol={}", fx.symbol_name);
 
     assert!(fx.caller_location.is_none());
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-prelude: caller location begin symbol={}", fx.symbol_name);
     if fx.instance.def.requires_caller_location(fx.tcx) {
         // Store caller location for `#[track_caller]`.
         let arg_abi = arg_abis_iter.next().unwrap();
@@ -313,6 +337,8 @@ pub(crate) fn codegen_fn_prelude<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, start_
         );
         fx.caller_location = Some(param.value);
     }
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-prelude: caller location complete symbol={}", fx.symbol_name);
 
     assert_eq!(arg_abis_iter.next(), None, "ArgAbi left behind for {:?}", fx.fn_abi);
     assert!(block_params_iter.next().is_none(), "arg_value left behind");
@@ -320,6 +346,12 @@ pub(crate) fn codegen_fn_prelude<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, start_
     self::comments::add_locals_header_comment(fx);
 
     for (local, arg_kind, ty) in func_params {
+        #[cfg(target_os = "trueos")]
+        println!(
+            "TRUEOS rustc cranelift-prelude: argument local begin symbol={} local={}",
+            fx.symbol_name,
+            local.index()
+        );
         // While this is normally an optimization to prevent an unnecessary copy when an argument is
         // not mutated by the current function, this is necessary to support unsized arguments.
         if let ArgKind::Normal(Some(ArgValue { value: val, is_underaligned_pointee: false })) =
@@ -370,19 +402,59 @@ pub(crate) fn codegen_fn_prelude<'tcx>(fx: &mut FunctionCx<'_, '_, 'tcx>, start_
                 }
             }
         }
+        #[cfg(target_os = "trueos")]
+        println!(
+            "TRUEOS rustc cranelift-prelude: argument local complete symbol={} local={}",
+            fx.symbol_name,
+            local.index()
+        );
     }
 
     for local in fx.mir.vars_and_temps_iter() {
+        #[cfg(target_os = "trueos")]
+        println!(
+            "TRUEOS rustc cranelift-prelude: local begin symbol={} local={}",
+            fx.symbol_name,
+            local.index()
+        );
         let ty = fx.monomorphize(fx.mir.local_decls[local].ty);
+        #[cfg(target_os = "trueos")]
+        println!(
+            "TRUEOS rustc cranelift-prelude: local type ready symbol={} local={}",
+            fx.symbol_name,
+            local.index()
+        );
         let layout = fx.layout_of(ty);
+        #[cfg(target_os = "trueos")]
+        println!(
+            "TRUEOS rustc cranelift-prelude: local layout ready symbol={} local={}",
+            fx.symbol_name,
+            local.index()
+        );
 
         let is_ssa = ssa_analyzed[local].is_ssa(fx, ty);
+        #[cfg(target_os = "trueos")]
+        println!(
+            "TRUEOS rustc cranelift-prelude: local ssa ready symbol={} local={} is_ssa={is_ssa}",
+            fx.symbol_name,
+            local.index()
+        );
 
         let place = make_local_place(fx, local, layout, is_ssa);
+        #[cfg(target_os = "trueos")]
+        println!(
+            "TRUEOS rustc cranelift-prelude: local place ready symbol={} local={}",
+            fx.symbol_name,
+            local.index()
+        );
         assert_eq!(fx.local_map.push(place), local);
     }
 
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-prelude: entry jump begin symbol={}", fx.symbol_name);
     fx.bcx.ins().jump(*fx.block_map.get(START_BLOCK).unwrap(), &[]);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-prelude: complete symbol={}", fx.symbol_name);
 }
 
 struct CallArgument<'tcx> {
@@ -410,13 +482,29 @@ pub(crate) fn codegen_terminator_call<'tcx>(
     target: Option<BasicBlock>,
     unwind: UnwindAction,
 ) {
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-call: entry symbol={}", fx.symbol_name);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-call: function operand begin symbol={}", fx.symbol_name);
     let func = codegen_operand(fx, func);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-call: function operand complete symbol={}", fx.symbol_name);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-call: function signature begin symbol={}", fx.symbol_name);
     let fn_sig = func.layout().ty.fn_sig(fx.tcx);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-call: function signature complete symbol={}", fx.symbol_name);
 
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-call: return place begin symbol={}", fx.symbol_name);
     let ret_place = codegen_place(fx, destination);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-call: return place complete symbol={}", fx.symbol_name);
 
     // Handle special calls like intrinsics and empty drop glue.
     let instance = if let ty::FnDef(def_id, fn_args) = *func.layout().ty.kind() {
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc cranelift-call: instance resolve begin symbol={}", fx.symbol_name);
         let instance = ty::Instance::expect_resolve(
             fx.tcx,
             ty::TypingEnv::fully_monomorphized(),
@@ -424,7 +512,11 @@ pub(crate) fn codegen_terminator_call<'tcx>(
             fn_args,
             source_info.span,
         );
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc cranelift-call: instance resolve complete symbol={}", fx.symbol_name);
 
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc cranelift-call: compiler-builtins check begin symbol={}", fx.symbol_name);
         if is_call_from_compiler_builtins_to_upstream_monomorphization(fx.tcx, instance) {
             if target.is_some() {
                 let caller_def = fx.instance.def_id();
@@ -439,7 +531,11 @@ pub(crate) fn codegen_terminator_call<'tcx>(
                 return;
             }
         }
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc cranelift-call: compiler-builtins check complete symbol={}", fx.symbol_name);
 
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc cranelift-call: llvm symbol query begin symbol={}", fx.symbol_name);
         if fx.tcx.symbol_name(instance).name.starts_with("llvm.") {
             crate::intrinsics::codegen_llvm_intrinsic_call(
                 fx,
@@ -451,7 +547,11 @@ pub(crate) fn codegen_terminator_call<'tcx>(
             );
             return;
         }
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc cranelift-call: llvm symbol query complete symbol={}", fx.symbol_name);
 
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc cranelift-call: instance-kind check begin symbol={}", fx.symbol_name);
         match instance.def {
             InstanceKind::Intrinsic(_) => {
                 match crate::intrinsics::codegen_intrinsic_call(
@@ -480,16 +580,26 @@ pub(crate) fn codegen_terminator_call<'tcx>(
     } else {
         None
     };
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-call: instance-kind check complete symbol={}", fx.symbol_name);
 
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-call: extra args begin symbol={}", fx.symbol_name);
     let extra_args = &args[fn_sig.inputs().skip_binder().len()..];
     let extra_args = fx.tcx.mk_type_list_from_iter(
         extra_args.iter().map(|op_arg| fx.monomorphize(op_arg.node.ty(fx.mir, fx.tcx))),
     );
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-call: extra args complete symbol={}", fx.symbol_name);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-call: fn abi begin symbol={}", fx.symbol_name);
     let fn_abi = if let Some(instance) = instance {
         FullyMonomorphizedLayoutCx(fx.tcx).fn_abi_of_instance(instance, extra_args)
     } else {
         FullyMonomorphizedLayoutCx(fx.tcx).fn_abi_of_fn_ptr(fn_sig, extra_args)
     };
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-call: fn abi complete symbol={}", fx.symbol_name);
 
     let is_cold = if fn_sig.abi() == ExternAbi::RustCold {
         true
@@ -506,6 +616,8 @@ pub(crate) fn codegen_terminator_call<'tcx>(
     }
 
     // Unpack arguments tuple for closures
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-call: argument lowering begin symbol={}", fx.symbol_name);
     let mut args = if fn_sig.abi() == ExternAbi::RustCall {
         let (self_arg, pack_arg) = match args {
             [pack_arg] => (None, codegen_call_argument_operand(fx, &pack_arg.node)),
@@ -533,6 +645,8 @@ pub(crate) fn codegen_terminator_call<'tcx>(
     } else {
         args.iter().map(|arg| codegen_call_argument_operand(fx, &arg.node)).collect::<Vec<_>>()
     };
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-call: argument lowering complete symbol={}", fx.symbol_name);
 
     // Pass the caller location for `#[track_caller]`.
     if instance.is_some_and(|inst| inst.def.requires_caller_location(fx.tcx)) {
@@ -543,6 +657,8 @@ pub(crate) fn codegen_terminator_call<'tcx>(
     let args = args;
     assert_eq!(fn_abi.args.len(), args.len());
 
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-call: function reference begin symbol={}", fx.symbol_name);
     let (func_ref, first_arg_override) = match instance {
         // Trait object call
         Some(Instance { def: InstanceKind::Virtual(_, idx), .. }) => {
@@ -584,7 +700,11 @@ pub(crate) fn codegen_terminator_call<'tcx>(
             (CallTarget::Indirect(sig, func), None)
         }
     };
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-call: function reference complete symbol={}", fx.symbol_name);
 
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-call: call emission begin symbol={}", fx.symbol_name);
     self::returning::codegen_with_call_return_arg(fx, &fn_abi.ret, ret_place, |fx, return_ptr| {
         let mut call_args = return_ptr
             .into_iter()
@@ -611,6 +731,8 @@ pub(crate) fn codegen_terminator_call<'tcx>(
 
         codegen_call_with_unwind_action(fx, source_info.span, func_ref, unwind, &call_args, None)
     });
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-call: call emission complete symbol={}", fx.symbol_name);
 
     if let Some(dest) = target {
         let ret_block = fx.get_block(dest);
@@ -618,6 +740,8 @@ pub(crate) fn codegen_terminator_call<'tcx>(
     } else {
         fx.bcx.ins().trap(TrapCode::user(1 /* unreachable */).unwrap());
     }
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift-call: complete symbol={}", fx.symbol_name);
 
     fn adjust_call_for_c_variadic<'tcx>(
         fx: &mut FunctionCx<'_, '_, 'tcx>,

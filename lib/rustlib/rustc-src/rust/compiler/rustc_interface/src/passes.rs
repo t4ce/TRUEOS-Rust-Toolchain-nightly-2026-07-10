@@ -1175,19 +1175,33 @@ fn run_required_analyses(tcx: TyCtxt<'_>) {
         tcx.par_hir_body_owners(|def_id| {
             trueos_mir_owner_marker("owner begin", def_id);
             let not_typeck_child = !tcx.is_typeck_child(def_id.to_def_id());
+            trueos_mir_owner_marker("typeck-child check complete", def_id);
             if not_typeck_child {
                 // Child unsafety and borrowck happens together with the parent
+                trueos_mir_owner_marker("unsafety begin", def_id);
                 tcx.ensure_ok().check_unsafety(def_id);
+                trueos_mir_owner_marker("unsafety complete", def_id);
             }
+            trueos_mir_owner_marker("trivial-const check begin", def_id);
             if tcx.is_trivial_const(def_id) {
+                trueos_mir_owner_marker("trivial-const early return", def_id);
                 return;
             }
+            trueos_mir_owner_marker("trivial-const check complete", def_id);
             if not_typeck_child {
+                trueos_mir_owner_marker("borrowck begin", def_id);
                 tcx.ensure_ok().mir_borrowck(def_id);
+                trueos_mir_owner_marker("borrowck complete", def_id);
+                trueos_mir_owner_marker("transmute checks begin", def_id);
                 tcx.ensure_ok().check_transmutes(def_id);
+                trueos_mir_owner_marker("transmute checks complete", def_id);
             }
+            trueos_mir_owner_marker("ffi-unwind checks begin", def_id);
             tcx.ensure_ok().has_ffi_unwind_calls(def_id);
+            trueos_mir_owner_marker("ffi-unwind checks complete", def_id);
+            trueos_mir_owner_marker("liveness checks begin", def_id);
             tcx.ensure_ok().check_liveness(def_id);
+            trueos_mir_owner_marker("liveness checks complete", def_id);
             trueos_mir_owner_marker("pre-codegen checks complete", def_id);
 
             // If we need to codegen, ensure that we emit all errors from

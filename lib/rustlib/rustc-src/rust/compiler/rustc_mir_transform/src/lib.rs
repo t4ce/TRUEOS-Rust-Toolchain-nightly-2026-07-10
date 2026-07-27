@@ -396,21 +396,29 @@ fn mir_const_qualif(tcx: TyCtxt<'_>, def: LocalDefId) -> ConstQualifs {
 
 /// Implementation of the `mir_built` query.
 fn mir_built(tcx: TyCtxt<'_>, def: LocalDefId) -> &Steal<Body<'_>> {
+    trueos_mir_transform_marker("mir-built provider begin", def);
+
     // Delegate to the main MIR building code in the `rustc_mir_build` crate.
     // This is the one place that is allowed to call `build_mir_inner_impl`.
+    trueos_mir_transform_marker("mir-built inner build begin", def);
     let mut body = tcx.build_mir_inner_impl(def);
+    trueos_mir_transform_marker("mir-built inner build complete", def);
 
     // Identifying trivial consts based on their mir_built is easy, but a little wasteful.
     // Trying to push this logic earlier in the compiler and never even produce the Body would
     // probably improve compile time.
+    trueos_mir_transform_marker("mir-built trivial check begin", def);
     if trivial_const::trivial_const(tcx, def, || &body).is_some() {
         // Skip all the passes below for trivial consts.
         let body = tcx.alloc_steal_mir(body);
         pass_manager::dump_mir_for_phase_change(tcx, &body.borrow());
+        trueos_mir_transform_marker("mir-built trivial return", def);
         return body;
     }
+    trueos_mir_transform_marker("mir-built trivial check complete", def);
 
     pass_manager::dump_mir_for_phase_change(tcx, &body);
+    trueos_mir_transform_marker("mir-built initial passes begin", def);
 
     pm::run_passes(
         tcx,
@@ -432,7 +440,10 @@ fn mir_built(tcx: TyCtxt<'_>, def: LocalDefId) -> &Steal<Body<'_>> {
         None,
         pm::Optimizations::Allowed,
     );
-    tcx.alloc_steal_mir(body)
+    trueos_mir_transform_marker("mir-built initial passes complete", def);
+    let body = tcx.alloc_steal_mir(body);
+    trueos_mir_transform_marker("mir-built provider complete", def);
+    body
 }
 
 /// Compute the main MIR body and the list of MIR bodies of the promoteds.

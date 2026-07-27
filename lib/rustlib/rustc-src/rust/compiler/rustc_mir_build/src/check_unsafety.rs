@@ -1053,22 +1053,39 @@ impl UnsafeOpKind {
 }
 
 pub(crate) fn check_unsafety(tcx: TyCtxt<'_>, def: LocalDefId) {
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc unsafety: provider begin def={def:?}");
+
     // Closures and inline consts are handled by their owner, if it has a body
     assert!(!tcx.is_typeck_child(def.to_def_id()));
     // Also, don't safety check custom MIR
     if find_attr!(tcx, def, CustomMir(..) => ()).is_some() {
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc unsafety: custom-mir early return def={def:?}");
         return;
     }
 
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc unsafety: thir body begin def={def:?}");
     let Ok((thir, expr)) = tcx.thir_body(def) else { return };
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc unsafety: thir body complete def={def:?}");
+
     // Runs all other queries that depend on THIR.
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc unsafety: mir built begin def={def:?}");
     tcx.ensure_done().mir_built(def);
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc unsafety: mir built complete def={def:?}");
+
     let thir = if tcx.sess.opts.unstable_opts.no_steal_thir {
         &thir.borrow()
     } else {
         // We don't have other use for the THIR. Steal it to reduce memory usage.
         &thir.steal()
     };
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc unsafety: thir access ready def={def:?}");
 
     let hir_id = tcx.local_def_id_to_hir_id(def);
     let safety_context = tcx.hir_fn_sig_by_hir_id(hir_id).map_or(SafetyContext::Safe, |fn_sig| {
@@ -1105,7 +1122,11 @@ pub(crate) fn check_unsafety(tcx: TyCtxt<'_>, def: LocalDefId) {
         }
     }
     // Visit the body.
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc unsafety: visitor begin def={def:?}");
     visitor.visit_expr(&thir[expr]);
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc unsafety: visitor complete def={def:?}");
 
     warnings.sort_by_key(|w| w.block_span);
     for UnusedUnsafeWarning { hir_id, block_span, enclosing_unsafe } in warnings {
@@ -1117,4 +1138,6 @@ pub(crate) fn check_unsafety(tcx: TyCtxt<'_>, def: LocalDefId) {
             UnusedUnsafe { span: block_span, enclosing: enclosing_unsafe },
         );
     }
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc unsafety: provider complete def={def:?}");
 }

@@ -247,11 +247,24 @@ fn run_passes_inner<'tcx>(
     validate_each: bool,
     optimizations: Optimizations,
 ) {
+    #[cfg(target_os = "trueos")]
+    std::println!(
+        "TRUEOS rustc mir-pass: manager begin def={:?} phase={:?} passes={}",
+        body.source.def_id(),
+        body.phase,
+        passes.len(),
+    );
+
     let overridden_passes = &tcx.sess.opts.unstable_opts.mir_enable_passes;
     trace!(?overridden_passes);
 
     let named_passes: FxIndexSet<_> =
         overridden_passes.iter().map(|(name, _)| name.as_str()).collect();
+    #[cfg(target_os = "trueos")]
+    std::println!(
+        "TRUEOS rustc mir-pass: override names ready def={:?}",
+        body.source.def_id(),
+    );
 
     let mut unknown_found = false;
     for &name in named_passes.difference(&*crate::PASS_NAMES) {
@@ -264,6 +277,11 @@ fn run_passes_inner<'tcx>(
         valid_pass_names.sort();
         tcx.dcx().emit_note(diagnostics::ValidPassNames { valid_passes: valid_pass_names.into() });
     }
+    #[cfg(target_os = "trueos")]
+    std::println!(
+        "TRUEOS rustc mir-pass: declared names ready def={:?}",
+        body.source.def_id(),
+    );
 
     // Verify that no passes are missing from the `declare_passes` invocation
     #[cfg(debug_assertions)]

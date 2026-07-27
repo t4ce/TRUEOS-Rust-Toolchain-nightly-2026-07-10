@@ -42,14 +42,24 @@ pub(crate) struct AotModule {
 }
 
 fn make_module(tcx: TyCtxt<'_>, cgu_name: &str) -> AotModule {
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: make module entry name={cgu_name}");
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: build isa begin name={cgu_name}");
     let isa = crate::build_isa(tcx.sess, false);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: build isa complete name={cgu_name}");
 
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: object builder begin name={cgu_name}");
     let mut builder = ObjectBuilder::new(
         isa,
         cgu_name.to_owned() + ".o",
         cranelift_module::default_libcall_names(),
     )
     .unwrap();
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: object builder complete name={cgu_name}");
 
     // Disable function sections by default on MSVC as it causes significant slowdowns with link.exe.
     // Maybe link.exe has exponential behavior when there are many sections with the same name? Also
@@ -62,11 +72,19 @@ fn make_module(tcx: TyCtxt<'_>, cgu_name: &str) -> AotModule {
         tcx.sess.opts.unstable_opts.function_sections.unwrap_or(default_function_sections),
     );
 
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: unwind module begin name={cgu_name}");
     let module = UnwindModule::new(ObjectModule::new(builder), true);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: unwind module complete name={cgu_name}");
 
     let producer = crate::debuginfo::producer(tcx.sess);
     let global_asm_config = GlobalAsmConfig::new(tcx.sess);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: debug context begin name={cgu_name}");
     let debug_context = DebugContext::new(tcx, module.isa(), false, cgu_name);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: debug context complete name={cgu_name}");
     let codegened_functions = vec![];
     let global_asm = String::new();
 
@@ -90,10 +108,18 @@ fn emit_module(
     global_asm_object: Option<PathBuf>,
     producer_str: &str,
 ) -> Result<CompiledModule, String> {
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: emit module finish begin name={name}");
     let mut product = module.finish();
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: emit module finish complete name={name}");
 
     if let Some(mut debug) = debug {
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc cranelift: debug emit begin name={name}");
         debug.emit(&mut product);
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc cranelift: debug emit complete name={name}");
     }
 
     if product.object.format() == cranelift_object::object::BinaryFormat::Elf {
@@ -109,19 +135,34 @@ fn emit_module(
     }
 
     let tmp_file = output_filenames.temp_path_for_cgu(OutputType::Object, &name);
+    #[cfg(target_os = "trueos")]
+    println!(
+        "TRUEOS rustc cranelift: object file create begin name={name} path={}",
+        tmp_file.display()
+    );
     let file = match File::create(&tmp_file) {
         Ok(file) => file,
         Err(err) => return Err(format!("error creating object file: {}", err)),
     };
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: object file create complete name={name}");
 
     let mut file = BufWriter::new(file);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: object write begin name={name}");
     if let Err(err) = product.object.write_stream(&mut file) {
         return Err(format!("error writing object file: {}", err));
     }
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: object write complete name={name}");
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: object flush begin name={name}");
     let file = match file.into_inner() {
         Ok(file) => file,
         Err(err) => return Err(format!("error writing object file: {}", err)),
     };
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: object flush complete name={name}");
 
     if prof.enabled() {
         prof.artifact_size(
@@ -145,18 +186,59 @@ fn emit_module(
 }
 
 fn codegen_cgu(tcx: TyCtxt<'_>, cgu_name: Symbol) -> AotModule {
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: codegen cgu entry name={cgu_name}");
     let _timer = tcx.prof.generic_activity_with_arg("codegen cgu", cgu_name.as_str());
 
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: cgu query begin name={cgu_name}");
     let cgu = tcx.codegen_unit(cgu_name);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: cgu query complete name={cgu_name}");
     let mono_items = cgu.items_in_deterministic_order(tcx);
+    #[cfg(target_os = "trueos")]
+    println!(
+        "TRUEOS rustc cranelift: mono item order ready name={cgu_name} count={}",
+        mono_items.len()
+    );
 
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: make module begin name={cgu_name}");
     let mut module = make_module(tcx, cgu_name.as_str());
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: make module complete name={cgu_name}");
     let mut type_dbg = TypeDebugContext::default();
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: predefine mono items begin name={cgu_name}");
     super::predefine_mono_items(tcx, &mut module.module, &mono_items);
-    for (mono_item, item_data) in mono_items {
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: predefine mono items complete name={cgu_name}");
+    for (mono_index, (mono_item, item_data)) in mono_items.into_iter().enumerate() {
         match mono_item {
             MonoItem::Fn(instance) => {
+                #[cfg(target_os = "trueos")]
+                println!(
+                    "TRUEOS rustc cranelift: mono fn begin name={cgu_name} index={mono_index}"
+                );
+                #[cfg(target_os = "trueos")]
+                println!(
+                    "TRUEOS rustc cranelift: mono fn attrs begin name={cgu_name} index={mono_index}"
+                );
                 let flags = tcx.codegen_instance_attrs(instance.def).flags;
+                #[cfg(target_os = "trueos")]
+                println!(
+                    "TRUEOS rustc cranelift: mono fn attrs complete name={cgu_name} index={mono_index}"
+                );
+                #[cfg(target_os = "trueos")]
+                println!(
+                    "TRUEOS rustc cranelift: mono fn symbol begin name={cgu_name} index={mono_index}"
+                );
+                #[cfg(target_os = "trueos")]
+                let mono_symbol = tcx.symbol_name(instance).name;
+                #[cfg(target_os = "trueos")]
+                println!(
+                    "TRUEOS rustc cranelift: mono fn symbol complete name={cgu_name} index={mono_index} symbol={mono_symbol}"
+                );
                 if flags.contains(CodegenFnAttrFlags::NAKED) {
                     rustc_codegen_ssa::mir::naked_asm::codegen_naked_asm(
                         &mut GlobalAsmContext { tcx, global_asm: &mut module.global_asm },
@@ -173,32 +255,81 @@ fn codegen_cgu(tcx: TyCtxt<'_>, cgu_name: Symbol) -> AotModule {
                     );
                     continue;
                 }
+                #[cfg(target_os = "trueos")]
+                println!(
+                    "TRUEOS rustc cranelift: mono fn lowering begin name={cgu_name} index={mono_index}"
+                );
+                #[cfg(target_os = "trueos")]
+                println!(
+                    "TRUEOS rustc cranelift: empty function begin name={cgu_name} index={mono_index}"
+                );
+                let empty_function = Function::new();
+                #[cfg(target_os = "trueos")]
+                println!(
+                    "TRUEOS rustc cranelift: empty function complete name={cgu_name} index={mono_index}"
+                );
+                #[cfg(target_os = "trueos")]
+                println!(
+                    "TRUEOS rustc cranelift: codegen-fn call begin name={cgu_name} index={mono_index}"
+                );
                 let codegened_function = crate::base::codegen_fn(
                     tcx,
                     cgu.name(),
                     module.debug_context.as_mut(),
                     &mut type_dbg,
-                    Function::new(),
+                    empty_function,
                     &mut module.module,
                     instance,
                 );
+                #[cfg(target_os = "trueos")]
+                println!(
+                    "TRUEOS rustc cranelift: codegen-fn call complete name={cgu_name} index={mono_index}"
+                );
+                #[cfg(target_os = "trueos")]
+                println!(
+                    "TRUEOS rustc cranelift: mono fn lowering complete name={cgu_name} index={mono_index}"
+                );
                 module.codegened_functions.push(codegened_function);
+                #[cfg(target_os = "trueos")]
+                println!(
+                    "TRUEOS rustc cranelift: mono fn complete name={cgu_name} index={mono_index}"
+                );
             }
             MonoItem::Static(def_id) => {
+                #[cfg(target_os = "trueos")]
+                println!(
+                    "TRUEOS rustc cranelift: mono static begin name={cgu_name} index={mono_index}"
+                );
                 let data_id = crate::constant::codegen_static(tcx, &mut module.module, def_id);
                 if let Some(debug_context) = module.debug_context.as_mut() {
                     debug_context.define_static(tcx, &mut type_dbg, def_id, data_id);
                 }
+                #[cfg(target_os = "trueos")]
+                println!(
+                    "TRUEOS rustc cranelift: mono static complete name={cgu_name} index={mono_index}"
+                );
             }
             MonoItem::GlobalAsm(item_id) => {
+                #[cfg(target_os = "trueos")]
+                println!(
+                    "TRUEOS rustc cranelift: mono global-asm begin name={cgu_name} index={mono_index}"
+                );
                 rustc_codegen_ssa::base::codegen_global_asm(
                     &mut GlobalAsmContext { tcx, global_asm: &mut module.global_asm },
                     item_id,
                 );
+                #[cfg(target_os = "trueos")]
+                println!(
+                    "TRUEOS rustc cranelift: mono global-asm complete name={cgu_name} index={mono_index}"
+                );
             }
         }
     }
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: entry wrapper begin name={cgu_name}");
     crate::main_shim::maybe_create_entry_wrapper(tcx, &mut module.module, false, cgu.is_primary());
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: entry wrapper complete name={cgu_name}");
 
     module
 }
@@ -211,13 +342,21 @@ fn compile_cgu(
     cgu_name: String,
     kind: ModuleKind,
 ) -> Result<CompiledModule, String> {
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: compile functions begin name={cgu_name}");
     prof.generic_activity_with_arg("compile functions", &*cgu_name).run(|| {
         cranelift_codegen::timing::set_thread_profiler(Box::new(super::MeasuremeProfiler(
             prof.clone(),
         )));
 
         let mut cached_context = Context::new();
-        for codegened_func in aot_module.codegened_functions {
+        for (function_index, codegened_func) in
+            aot_module.codegened_functions.into_iter().enumerate()
+        {
+            #[cfg(target_os = "trueos")]
+            println!(
+                "TRUEOS rustc cranelift: compile function begin name={cgu_name} index={function_index}"
+            );
             crate::base::compile_fn(
                 &prof,
                 &output_filenames,
@@ -228,8 +367,14 @@ fn compile_cgu(
                 &mut aot_module.global_asm,
                 codegened_func,
             );
+            #[cfg(target_os = "trueos")]
+            println!(
+                "TRUEOS rustc cranelift: compile function complete name={cgu_name} index={function_index}"
+            );
         }
     });
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cranelift: compile functions complete name={cgu_name}");
 
     let global_asm_object_file =
         prof.generic_activity_with_arg("compile assembly", &*cgu_name).run(|| {
@@ -283,9 +428,17 @@ impl ExtraBackendMethods for AotDriver {
         tcx: TyCtxt<'_>,
         cgu_name: Symbol,
     ) -> (ModuleCodegen<Self::Module>, u64) {
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc cranelift: compile-codegen-unit entry name={cgu_name}");
         let start_time = Instant::now();
 
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc cranelift: dep node begin name={cgu_name}");
         let dep_node = tcx.codegen_unit(cgu_name).codegen_dep_node(tcx);
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc cranelift: dep node complete name={cgu_name}");
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc cranelift: dep task begin name={cgu_name}");
         let (module, _) = tcx.dep_graph.with_task(
             dep_node,
             tcx,
@@ -295,6 +448,8 @@ impl ExtraBackendMethods for AotDriver {
             },
             Some(rustc_middle::dep_graph::hash_result),
         );
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc cranelift: dep task complete name={cgu_name}");
 
         let time_to_codegen = start_time.elapsed();
 

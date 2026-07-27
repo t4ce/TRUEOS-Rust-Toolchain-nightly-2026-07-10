@@ -22,8 +22,6 @@ const PAYLOAD_LIB: &str = "rustc-payload/lib";
 const TRUEOS_HELLO_SOURCE: &str = r#"#![no_std]
 #![no_main]
 
-use trueos::logl::level;
-
 unsafe extern "C" {
     fn trueos_cabi_write(stream: u32, bytes: *const u8, len: usize);
 }
@@ -31,9 +29,8 @@ unsafe extern "C" {
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() {
     let message = b"hello_world: rustc\n";
-    let stream = if level::INFO >= 3 { 1 } else { 2 };
     unsafe {
-        trueos_cabi_write(stream, message.as_ptr(), message.len());
+        trueos_cabi_write(1, message.as_ptr(), message.len());
     }
 }
 "#;

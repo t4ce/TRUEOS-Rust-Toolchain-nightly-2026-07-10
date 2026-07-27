@@ -65,18 +65,38 @@ pub(crate) fn closure_saved_names_of_captured_variables<'tcx>(
 /// This is the implementation of hook `build_mir_inner_impl`, which should only
 /// be called by the query `mir_built`.
 pub(crate) fn build_mir_inner_impl<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> Body<'tcx> {
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc mir-build: inner provider begin def={def:?}");
+
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc mir-build: abstract const begin def={def:?}");
     tcx.ensure_done().thir_abstract_const(def);
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc mir-build: abstract const complete def={def:?}");
+
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc mir-build: match checks begin def={def:?}");
     if let Err(e) = tcx.ensure_result().check_match(def) {
         return construct_error(tcx, def, e);
     }
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc mir-build: match checks complete def={def:?}");
 
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc mir-build: tail-call checks begin def={def:?}");
     if let Err(err) = tcx.ensure_result().check_tail_calls(def) {
         return construct_error(tcx, def, err);
     }
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc mir-build: tail-call checks complete def={def:?}");
 
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc mir-build: thir fetch begin def={def:?}");
     let body = match tcx.thir_body(def) {
         Err(error_reported) => construct_error(tcx, def, error_reported),
         Ok((thir, expr)) => {
+            #[cfg(target_os = "trueos")]
+            std::println!("TRUEOS rustc mir-build: thir fetch complete def={def:?}");
             let build_mir = |thir: &Thir<'tcx>| match thir.body_type {
                 thir::BodyTy::Fn(fn_sig) => construct_fn(tcx, def, thir, expr, fn_sig),
                 thir::BodyTy::Const(ty) | thir::BodyTy::GlobalAsm(ty) => {
@@ -87,7 +107,12 @@ pub(crate) fn build_mir_inner_impl<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> 
             // Don't steal here, instead steal in unsafeck. This is so that
             // pattern inline constants can be evaluated as part of building the
             // THIR of the parent function without a cycle.
-            build_mir(&thir.borrow())
+            #[cfg(target_os = "trueos")]
+            std::println!("TRUEOS rustc mir-build: construct begin def={def:?}");
+            let body = build_mir(&thir.borrow());
+            #[cfg(target_os = "trueos")]
+            std::println!("TRUEOS rustc mir-build: construct complete def={def:?}");
+            body
         }
     };
 
@@ -103,6 +128,8 @@ pub(crate) fn build_mir_inner_impl<'tcx>(tcx: TyCtxt<'tcx>, def: LocalDefId) -> 
         "Unexpected free regions in MIR: {body:?}",
     );
 
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc mir-build: inner provider complete def={def:?}");
     body
 }
 
@@ -455,17 +482,31 @@ fn construct_fn<'tcx>(
     expr: ExprId,
     fn_sig: ty::FnSig<'tcx>,
 ) -> Body<'tcx> {
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: entry def={fn_def:?}");
+
     let span = tcx.def_span(fn_def);
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: def span ready def={fn_def:?}");
     let fn_id = tcx.local_def_id_to_hir_id(fn_def);
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: hir id ready def={fn_def:?}");
 
     // Figure out what primary body this item has.
     let body = tcx.hir_body_owned_by(fn_def);
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: hir body ready def={fn_def:?}");
     let span_with_body = tcx.hir_span_with_body(fn_id);
-    let return_ty_span = tcx
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: body span ready def={fn_def:?}");
+    let fn_decl = tcx
         .hir_fn_decl_by_hir_id(fn_id)
-        .unwrap_or_else(|| span_bug!(span, "can't build MIR for {:?}", fn_def))
-        .output
-        .span();
+        .unwrap_or_else(|| span_bug!(span, "can't build MIR for {:?}", fn_def));
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: fn decl ready def={fn_def:?}");
+    let return_ty_span = fn_decl.output.span();
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: return span ready def={fn_def:?}");
 
     let mut abi = fn_sig.abi();
     if let DefKind::Closure = tcx.def_kind(fn_def) {
@@ -473,11 +514,18 @@ fn construct_fn<'tcx>(
         // as it adds unnecessary (and wrong) auto-tupling.
         abi = ExternAbi::Rust;
     }
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: abi ready def={fn_def:?} abi={abi:?}");
 
     let arguments = &thir.params;
 
     let return_ty = fn_sig.output();
-    let coroutine = match tcx.type_of(fn_def).instantiate_identity().skip_norm_wip().kind() {
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: type query begin def={fn_def:?}");
+    let fn_ty = tcx.type_of(fn_def).instantiate_identity().skip_norm_wip();
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: type query complete def={fn_def:?}");
+    let coroutine = match fn_ty.kind() {
         ty::Coroutine(_, args) => Some(Box::new(CoroutineInfo::initial(
             tcx.coroutine_kind(fn_def).unwrap(),
             args.as_coroutine().yield_ty(),
@@ -486,7 +534,11 @@ fn construct_fn<'tcx>(
         ty::Closure(..) | ty::CoroutineClosure(..) | ty::FnDef(..) => None,
         ty => span_bug!(span_with_body, "unexpected type of body: {ty:?}"),
     };
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: coroutine check complete def={fn_def:?}");
 
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: custom-mir attr check begin def={fn_def:?}");
     if let Some((dialect, phase)) =
         find_attr!(tcx, fn_id, CustomMir(dialect, phase) => (dialect, phase))
     {
@@ -504,7 +556,11 @@ fn construct_fn<'tcx>(
             phase.as_ref().map(|(p, _)| *p),
         );
     }
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: custom-mir attr check complete def={fn_def:?}");
 
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: typing mode begin def={fn_def:?}");
     let typing_mode = if tcx.use_typing_mode_post_typeck_until_borrowck() {
         TypingMode::borrowck(tcx, fn_def)
     } else {
@@ -512,8 +568,16 @@ fn construct_fn<'tcx>(
         // types defined during HIR typeck.
         TypingMode::non_body_analysis()
     };
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: typing mode complete def={fn_def:?}");
 
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: inference context begin def={fn_def:?}");
     let infcx = tcx.infer_ctxt().build(typing_mode);
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: inference context complete def={fn_def:?}");
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: builder new begin def={fn_def:?}");
     let mut builder = Builder::new(
         thir,
         infcx,
@@ -525,6 +589,8 @@ fn construct_fn<'tcx>(
         return_ty_span,
         coroutine,
     );
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: builder new complete def={fn_def:?}");
 
     let call_site_scope =
         region::Scope { local_id: body.id().hir_id.local_id, data: region::ScopeData::CallSite };
@@ -532,24 +598,50 @@ fn construct_fn<'tcx>(
         region::Scope { local_id: body.id().hir_id.local_id, data: region::ScopeData::Arguments };
     let source_info = builder.source_info(span);
     let call_site_s = (call_site_scope, source_info);
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: scopes ready def={fn_def:?}");
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: body lowering begin def={fn_def:?}");
     let _: BlockAnd<()> = builder.in_scope(call_site_s, LintLevel::Inherited, |builder| {
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc construct-fn: call scope entered def={fn_def:?}");
         let arg_scope_s = (arg_scope, source_info);
         // Attribute epilogue to function's closing brace
         let fn_end = span_with_body.shrink_to_hi();
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc construct-fn: breakable scope begin def={fn_def:?}");
         let return_block = builder
             .in_breakable_scope(None, Place::return_place(), fn_end, |builder| {
+                #[cfg(target_os = "trueos")]
+                std::println!("TRUEOS rustc construct-fn: argument scope begin def={fn_def:?}");
                 Some(builder.in_scope(arg_scope_s, LintLevel::Inherited, |builder| {
+                    #[cfg(target_os = "trueos")]
+                    std::println!("TRUEOS rustc construct-fn: args-and-body begin def={fn_def:?}");
                     builder.args_and_body(START_BLOCK, arguments, arg_scope, expr)
                 }))
             })
             .into_block();
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc construct-fn: breakable scope complete def={fn_def:?}");
         let source_info = builder.source_info(fn_end);
         builder.cfg.terminate(return_block, source_info, TerminatorKind::Return);
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc construct-fn: return terminator ready def={fn_def:?}");
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc construct-fn: drop trees begin def={fn_def:?}");
         builder.build_drop_trees();
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc construct-fn: drop trees complete def={fn_def:?}");
         return_block.unit()
     });
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: body lowering complete def={fn_def:?}");
 
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: finish begin def={fn_def:?}");
     let mut body = builder.finish();
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: finish complete def={fn_def:?}");
 
     body.spread_arg = if abi == ExternAbi::RustCall {
         // RustCall pseudo-ABI untuples the last argument.
@@ -559,6 +651,8 @@ fn construct_fn<'tcx>(
         None
     };
 
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc construct-fn: complete def={fn_def:?}");
     body
 }
 
@@ -758,10 +852,14 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         return_span: Span,
         coroutine: Option<Box<CoroutineInfo<'tcx>>>,
     ) -> Builder<'a, 'tcx> {
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-builder-new: entry def={def:?}");
         let tcx = infcx.tcx;
         // Some functions always have overflow checks enabled,
         // however, they may not get codegen'd, depending on
         // the settings for the crate they are codegened in.
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-builder-new: overflow attrs begin def={def:?}");
         let mut check_overflow = find_attr!(tcx.hir_attrs(hir_id), RustcInheritOverflowChecks);
         // Respect -C overflow-checks.
         check_overflow |= tcx.sess.overflow_checks();
@@ -770,14 +868,30 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
             tcx.hir_body_owner_kind(def),
             hir::BodyOwnerKind::Const { .. } | hir::BodyOwnerKind::Static(_)
         );
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-builder-new: overflow attrs complete def={def:?}");
 
         let lint_level = LintLevel::Explicit(hir_id);
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-builder-new: param env begin def={def:?}");
         let param_env = tcx.param_env(def);
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-builder-new: param env complete def={def:?}");
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-builder-new: region scope tree begin def={def:?}");
+        let region_scope_tree = tcx.region_scope_tree(def);
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-builder-new: region scope tree complete def={def:?}");
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-builder-new: coverage info begin def={def:?}");
+        let coverage_info = coverageinfo::CoverageInfoBuilder::new_if_enabled(tcx, def);
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-builder-new: coverage info complete def={def:?}");
         let mut builder = Builder {
             thir,
             tcx,
             infcx,
-            region_scope_tree: tcx.region_scope_tree(def),
+            region_scope_tree,
             param_env,
             def_id: def,
             hir_id,
@@ -800,13 +914,21 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
             unit_temp: None,
             var_debug_info: vec![],
             lint_level_roots_cache: GrowableBitSet::new_empty(),
-            coverage_info: coverageinfo::CoverageInfoBuilder::new_if_enabled(tcx, def),
+            coverage_info,
         };
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-builder-new: state initialized def={def:?}");
 
         assert_eq!(builder.cfg.start_new_block(), START_BLOCK);
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-builder-new: start block ready def={def:?}");
         assert_eq!(builder.new_source_scope(span, lint_level), OUTERMOST_SOURCE_SCOPE);
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-builder-new: source scope ready def={def:?}");
         builder.source_scopes[OUTERMOST_SOURCE_SCOPE].parent_scope = None;
 
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-builder-new: complete def={def:?}");
         builder
     }
 
@@ -935,6 +1057,12 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         argument_scope: region::Scope,
         expr_id: ExprId,
     ) -> BlockAnd<()> {
+        #[cfg(target_os = "trueos")]
+        std::println!(
+            "TRUEOS rustc args-and-body: entry def={:?} args={} expr={expr_id:?}",
+            self.def_id,
+            arguments.len(),
+        );
         let expr_span = self.thir[expr_id].span;
         // Allocate locals for the function arguments
         for (argument_index, param) in arguments.iter().enumerate() {
@@ -956,8 +1084,12 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                 });
             }
         }
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc args-and-body: argument locals ready def={:?}", self.def_id);
 
         self.insert_upvar_arg();
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc args-and-body: upvars ready def={:?}", self.def_id);
 
         let mut scope = None;
         // Bind the argument patterns
@@ -1023,12 +1155,16 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
             }
             self.source_scope = original_source_scope;
         }
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc args-and-body: argument patterns ready def={:?}", self.def_id);
 
         // Enter the argument pattern bindings source scope, if it exists.
         if let Some(source_scope) = scope {
             self.source_scope = source_scope;
         }
 
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc args-and-body: body mode check begin def={:?}", self.def_id);
         if self.tcx.intrinsic(self.def_id).is_some_and(|i| i.must_be_overridden)
             || self.tcx.is_sdylib_interface_build()
         {
@@ -1049,7 +1185,12 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                 }
                 _ => {}
             }
-            self.expr_into_dest(Place::return_place(), block, expr_id)
+            #[cfg(target_os = "trueos")]
+            std::println!("TRUEOS rustc args-and-body: expr lowering begin def={:?}", self.def_id);
+            let result = self.expr_into_dest(Place::return_place(), block, expr_id);
+            #[cfg(target_os = "trueos")]
+            std::println!("TRUEOS rustc args-and-body: expr lowering complete def={:?}", self.def_id);
+            result
         }
     }
 

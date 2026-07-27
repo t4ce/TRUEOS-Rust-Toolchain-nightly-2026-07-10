@@ -35,6 +35,12 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
         // just use the name `this` uniformly
         let this = self; // See "LET_THIS_SELF".
         let expr = &this.thir[expr_id];
+        #[cfg(target_os = "trueos")]
+        std::println!(
+            "TRUEOS rustc mir-expr: into begin def={:?} expr={expr_id:?} kind={:?}",
+            this.def_id,
+            core::mem::discriminant(&expr.kind),
+        );
         let expr_span = expr.span;
         let source_info = this.source_info(expr_span);
 
@@ -929,6 +935,11 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
             assert!(popped.is_some());
         }
 
+        #[cfg(target_os = "trueos")]
+        std::println!(
+            "TRUEOS rustc mir-expr: into complete def={:?} expr={expr_id:?}",
+            this.def_id,
+        );
         block_and
     }
 

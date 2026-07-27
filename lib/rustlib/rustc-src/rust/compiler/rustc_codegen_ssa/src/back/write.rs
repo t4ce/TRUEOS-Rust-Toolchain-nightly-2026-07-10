@@ -423,6 +423,8 @@ pub(crate) fn start_async_codegen<B: WriteBackendMethods>(
     tcx: TyCtxt<'_>,
     allocator_module: Option<ModuleCodegen<B::Module>>,
 ) -> OngoingCodegen<B> {
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc codegen-coordinator: setup entry");
     let (coordinator_send, coordinator_receive) = channel();
 
     let no_builtins = find_attr!(tcx, crate, NoBuiltins);
@@ -432,7 +434,11 @@ pub(crate) fn start_async_codegen<B: WriteBackendMethods>(
 
     let (shared_emitter, shared_emitter_main) = SharedEmitter::new();
     let (codegen_worker_send, codegen_worker_receive) = channel();
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc codegen-coordinator: channels ready");
 
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc codegen-coordinator: spawn begin");
     let coordinator_thread = start_executing_work(
         backend.clone(),
         tcx,
@@ -444,6 +450,8 @@ pub(crate) fn start_async_codegen<B: WriteBackendMethods>(
         allocator_module,
         coordinator_send.clone(),
     );
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc codegen-coordinator: spawn complete");
 
     OngoingCodegen {
         backend,
@@ -1011,12 +1019,18 @@ fn do_thin_lto<B: WriteBackendMethods>(
     // After we've requested tokens then we'll, when we can,
     // get tokens on `coordinator_receive` which will
     // get managed in the main loop below.
-    let coordinator_send2 = coordinator_send.clone();
-    let helper = jobserver::client()
-        .into_helper_thread(move |token| {
-            drop(coordinator_send2.send(ThinLtoMessage::Token(token)));
-        })
-        .expect("failed to spawn helper thread");
+    let helper = if cgcx.parallel {
+        let coordinator_send2 = coordinator_send.clone();
+        Some(
+            jobserver::client()
+                .into_helper_thread(move |token| {
+                    drop(coordinator_send2.send(ThinLtoMessage::Token(token)));
+                })
+                .expect("failed to spawn helper thread"),
+        )
+    } else {
+        None
+    };
 
     let mut work_items = vec![];
 
@@ -1036,7 +1050,7 @@ fn do_thin_lto<B: WriteBackendMethods>(
         let insertion_index =
             work_items.binary_search_by_key(&cost, |&(_, cost)| cost).unwrap_or_else(|e| e);
         work_items.insert(insertion_index, (work, cost));
-        if cgcx.parallel {
+        if let Some(helper) = &helper {
             helper.request_token();
         }
     }
@@ -1240,12 +1254,21 @@ fn start_executing_work<B: WriteBackendMethods>(
     // After we've requested tokens then we'll, when we can,
     // get tokens on `coordinator_receive` which will
     // get managed in the main loop below.
-    let coordinator_send2 = coordinator_send.clone();
-    let helper = jobserver::client()
-        .into_helper_thread(move |token| {
-            drop(coordinator_send2.send(Message::Token::<B>(token)));
-        })
-        .expect("failed to spawn helper thread");
+    let parallel = backend.supports_parallel() && !sess.opts.unstable_opts.no_parallel_backend;
+    let helper = if parallel {
+        let coordinator_send2 = coordinator_send.clone();
+        Some(
+            jobserver::client()
+                .into_helper_thread(move |token| {
+                    drop(coordinator_send2.send(Message::Token::<B>(token)));
+                })
+                .expect("failed to spawn helper thread"),
+        )
+    } else {
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc codegen: serial jobserver helper bypass");
+        None
+    };
 
     let opt_level = tcx.backend_optimization_level(());
     let backend_features = tcx.global_backend_features(()).clone();
@@ -1286,7 +1309,7 @@ fn start_executing_work<B: WriteBackendMethods>(
         target_is_like_gpu: tcx.sess.target.is_like_gpu,
         split_debuginfo: tcx.sess.split_debuginfo(),
         split_dwarf_kind: tcx.sess.opts.unstable_opts.split_dwarf_kind,
-        parallel: backend.supports_parallel() && !sess.opts.unstable_opts.no_parallel_backend,
+        parallel,
         pointer_size: tcx.data_layout.pointer_size(),
     };
 
@@ -1426,7 +1449,11 @@ fn start_executing_work<B: WriteBackendMethods>(
     // necessary. There's already optimizations in place to avoid sending work
     // back to the coordinator if LTO isn't requested.
     let f = move || {
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc codegen-coordinator: thread entry");
         let _profiler = if cgcx.time_trace { B::thread_profiler() } else { Box::new(()) };
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc codegen-coordinator: profiler ready");
 
         // This is where we collect codegen units that have gone all the way
         // through codegen and LLVM.
@@ -1471,7 +1498,11 @@ fn start_executing_work<B: WriteBackendMethods>(
         let mut llvm_start_time: Option<VerboseTimingGuard<'_>> = None;
 
         if let Some(allocator_module) = &mut allocator_module {
+            #[cfg(target_os = "trueos")]
+            println!("TRUEOS rustc codegen-coordinator: allocator optimize begin");
             B::optimize(&cgcx, &prof, &shared_emitter, allocator_module, &allocator_config);
+            #[cfg(target_os = "trueos")]
+            println!("TRUEOS rustc codegen-coordinator: allocator optimize complete");
         }
 
         // Run the message loop while there's still anything that needs message
@@ -1498,9 +1529,13 @@ fn start_executing_work<B: WriteBackendMethods>(
 
                     if !queue_full_enough(work_items.len(), anticipated_running) {
                         // The queue is not full enough, process more codegen units:
+                        #[cfg(target_os = "trueos")]
+                        println!("TRUEOS rustc codegen-coordinator: cgu signal send begin");
                         if codegen_worker_send.send(CguMessage).is_err() {
                             panic!("Could not send CguMessage to main thread")
                         }
+                        #[cfg(target_os = "trueos")]
+                        println!("TRUEOS rustc codegen-coordinator: cgu signal send complete");
                         main_thread_state = MainThreadState::Codegenning;
                     } else {
                         // The queue is full enough to not let the worker
@@ -1592,7 +1627,12 @@ fn start_executing_work<B: WriteBackendMethods>(
             // Relinquish accidentally acquired extra tokens.
             tokens.truncate(running_with_own_token);
 
-            match coordinator_receive.recv().unwrap() {
+            #[cfg(target_os = "trueos")]
+            println!("TRUEOS rustc codegen-coordinator: message receive begin");
+            let coordinator_message = coordinator_receive.recv().unwrap();
+            #[cfg(target_os = "trueos")]
+            println!("TRUEOS rustc codegen-coordinator: message receive complete");
+            match coordinator_message {
                 // Save the token locally and the next turn of the loop will use
                 // this to spawn a new unit of work, or it may get dropped
                 // immediately if we have no more work to spawn.
@@ -1619,6 +1659,8 @@ fn start_executing_work<B: WriteBackendMethods>(
                 }
 
                 Message::CodegenDone { llvm_work_item, cost } => {
+                    #[cfg(target_os = "trueos")]
+                    println!("TRUEOS rustc codegen-coordinator: message codegen-done");
                     // We keep the queue sorted by estimated processing cost,
                     // so that more expensive items are processed earlier. This
                     // is good for throughput as it gives the main thread more
@@ -1633,7 +1675,7 @@ fn start_executing_work<B: WriteBackendMethods>(
                     };
                     work_items.insert(insertion_index, (llvm_work_item, cost));
 
-                    if cgcx.parallel {
+                    if let Some(helper) = &helper {
                         helper.request_token();
                     }
                     assert_eq!(main_thread_state, MainThreadState::Codegenning);
@@ -1641,6 +1683,8 @@ fn start_executing_work<B: WriteBackendMethods>(
                 }
 
                 Message::CodegenComplete => {
+                    #[cfg(target_os = "trueos")]
+                    println!("TRUEOS rustc codegen-coordinator: message codegen-complete");
                     if codegen_state != Aborted {
                         codegen_state = Completed;
                     }
@@ -1656,10 +1700,14 @@ fn start_executing_work<B: WriteBackendMethods>(
                 // we'll keep executing this loop until `running_with_own_token`
                 // hits 0.
                 Message::CodegenAborted => {
+                    #[cfg(target_os = "trueos")]
+                    println!("TRUEOS rustc codegen-coordinator: message codegen-aborted");
                     codegen_state = Aborted;
                 }
 
                 Message::WorkItem { result } => {
+                    #[cfg(target_os = "trueos")]
+                    println!("TRUEOS rustc codegen-coordinator: message work-item");
                     // If a thread exits successfully then we drop a token associated
                     // with that worker and update our `running_with_own_token` count.
                     // We may later re-acquire a token to continue running more work.
@@ -1845,6 +1893,8 @@ fn spawn_work<'a, B: WriteBackendMethods>(
     llvm_start_time: &mut Option<VerboseTimingGuard<'a>>,
     work: WorkItem<B>,
 ) {
+    #[cfg(target_os = "trueos")]
+    let parallel = cgcx.parallel;
     if llvm_start_time.is_none() {
         *llvm_start_time = Some(prof.verbose_generic_activity("LLVM_passes"));
     }
@@ -1877,6 +1927,20 @@ fn spawn_work<'a, B: WriteBackendMethods>(
         };
         drop(coordinator_send.send(msg));
     };
+    #[cfg(target_os = "trueos")]
+    {
+        if parallel {
+            std::thread::Builder::new()
+                .name(name)
+                .spawn(f)
+                .expect("failed to spawn work thread");
+        } else {
+            println!("TRUEOS rustc codegen: inline work begin name={name}");
+            f();
+            println!("TRUEOS rustc codegen: inline work complete name={name}");
+        }
+    }
+    #[cfg(not(target_os = "trueos"))]
     std::thread::Builder::new().name(name).spawn(f).expect("failed to spawn work thread");
 }
 
@@ -1888,6 +1952,8 @@ fn spawn_thin_lto_work<B: WriteBackendMethods>(
     coordinator_send: Sender<ThinLtoMessage>,
     work: ThinLtoWorkItem<B>,
 ) {
+    #[cfg(target_os = "trueos")]
+    let parallel = cgcx.parallel;
     let cgcx = cgcx.clone();
     let prof = prof.clone();
 
@@ -1919,6 +1985,20 @@ fn spawn_thin_lto_work<B: WriteBackendMethods>(
         };
         drop(coordinator_send.send(msg));
     };
+    #[cfg(target_os = "trueos")]
+    {
+        if parallel {
+            std::thread::Builder::new()
+                .name(name)
+                .spawn(f)
+                .expect("failed to spawn work thread");
+        } else {
+            println!("TRUEOS rustc codegen: inline thin-lto work begin name={name}");
+            f();
+            println!("TRUEOS rustc codegen: inline thin-lto work complete name={name}");
+        }
+    }
+    #[cfg(not(target_os = "trueos"))]
     std::thread::Builder::new().name(name).spawn(f).expect("failed to spawn work thread");
 }
 
@@ -2190,9 +2270,17 @@ impl<B: WriteBackendMethods> OngoingCodegen<B> {
     }
 
     pub(crate) fn codegen_finished(&self, tcx: TyCtxt<'_>) {
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc codegen-channel: final wait begin");
         self.wait_for_signal_to_codegen_item();
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc codegen-channel: final wait complete");
         self.check_for_errors(tcx.sess);
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc codegen-channel: complete send begin");
         drop(self.coordinator.sender.send(Message::CodegenComplete::<B>));
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc codegen-channel: complete send complete");
     }
 
     pub(crate) fn check_for_errors(&self, sess: &Session) {
@@ -2200,13 +2288,19 @@ impl<B: WriteBackendMethods> OngoingCodegen<B> {
     }
 
     pub(crate) fn wait_for_signal_to_codegen_item(&self) {
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc codegen-channel: cgu receive begin");
         match self.codegen_worker_receive.recv() {
             Ok(CguMessage) => {
                 // Ok to proceed.
+                #[cfg(target_os = "trueos")]
+                println!("TRUEOS rustc codegen-channel: cgu receive complete");
             }
             Err(_) => {
                 // One of the LLVM threads must have panicked, fall through so
                 // error handling can be reached.
+                #[cfg(target_os = "trueos")]
+                println!("TRUEOS rustc codegen-channel: cgu receive disconnected");
             }
         }
     }
@@ -2217,8 +2311,12 @@ pub(crate) fn submit_codegened_module_to_llvm<B: WriteBackendMethods>(
     module: ModuleCodegen<B::Module>,
     cost: u64,
 ) {
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc codegen-channel: codegen-done send begin");
     let llvm_work_item = WorkItem::Optimize(module);
     drop(coordinator.sender.send(Message::CodegenDone::<B> { llvm_work_item, cost }));
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc codegen-channel: codegen-done send complete");
 }
 
 pub(crate) fn submit_post_lto_module_to_llvm<B: WriteBackendMethods>(

@@ -17,10 +17,17 @@ pub(crate) fn thir_body<'tcx>(
     tcx: TyCtxt<'tcx>,
     owner_def: LocalDefId,
 ) -> Result<(&'tcx Steal<Thir<'tcx>>, ExprId), ErrorGuaranteed> {
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc thir: provider begin def={owner_def:?}");
+
     debug_assert!(!tcx.is_type_const(owner_def.to_def_id()), "thir_body queried for type_const");
 
     let body = tcx.hir_body_owned_by(owner_def);
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc thir: hir body ready def={owner_def:?}");
     let mut cx: ThirBuildCx<'tcx> = ThirBuildCx::new(tcx, owner_def);
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc thir: context ready def={owner_def:?}");
     if let Some(reported) = cx.typeck_results.tainted_by_errors {
         return Err(reported);
     }
@@ -45,8 +52,15 @@ pub(crate) fn thir_body<'tcx>(
         }
     }
 
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc thir: mirror expr begin def={owner_def:?}");
     let expr = cx.mirror_expr(body.value);
-    Ok((tcx.alloc_steal_thir(cx.thir), expr))
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc thir: mirror expr complete def={owner_def:?}");
+    let thir = tcx.alloc_steal_thir(cx.thir);
+    #[cfg(target_os = "trueos")]
+    std::println!("TRUEOS rustc thir: provider complete def={owner_def:?}");
+    Ok((thir, expr))
 }
 
 /// Context for lowering HIR to THIR for a single function body (or other kind of body).

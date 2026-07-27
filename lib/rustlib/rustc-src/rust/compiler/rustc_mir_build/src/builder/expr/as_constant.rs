@@ -20,9 +20,15 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
     /// `expr` is a valid compile-time constant!
     pub(crate) fn as_constant(&mut self, expr: &Expr<'tcx>) -> ConstOperand<'tcx> {
         let this = self; // See "LET_THIS_SELF".
+        #[cfg(target_os = "trueos")]
+        std::println!(
+            "TRUEOS rustc mir-expr: constant begin def={:?} kind={:?}",
+            this.def_id,
+            core::mem::discriminant(&expr.kind),
+        );
         let tcx = this.tcx;
         let Expr { ty, temp_scope_id: _, span, ref kind } = *expr;
-        match kind {
+        let constant = match kind {
             ExprKind::Scope { region_scope: _, hir_id: _, value } => {
                 this.as_constant(&this.thir[*value])
             }
@@ -37,7 +43,10 @@ impl<'a, 'tcx> Builder<'a, 'tcx> {
                 },
                 tcx,
             ),
-        }
+        };
+        #[cfg(target_os = "trueos")]
+        std::println!("TRUEOS rustc mir-expr: constant complete def={:?}", this.def_id);
+        constant
     }
 }
 
@@ -137,7 +146,11 @@ fn lit_to_mir_constant<'tcx>(tcx: TyCtxt<'tcx>, lit_input: LitToConstInput<'tcx>
         (ast::LitKind::Str(s, _), ty::Ref(_, inner_ty, _)) if inner_ty.is_str() => {
             let s = s.as_str().as_bytes();
             let len = s.len();
+            #[cfg(target_os = "trueos")]
+            std::println!("TRUEOS rustc mir-constant: string allocation begin bytes={len}");
             let allocation = tcx.allocate_bytes_dedup(s, CTFE_ALLOC_SALT);
+            #[cfg(target_os = "trueos")]
+            std::println!("TRUEOS rustc mir-constant: string allocation complete bytes={len}");
             ConstValue::Slice { alloc_id: allocation, meta: len.try_into().unwrap() }
         }
         (ast::LitKind::ByteStr(byte_sym, _), ty::Ref(_, inner_ty, _))
@@ -145,18 +158,37 @@ fn lit_to_mir_constant<'tcx>(tcx: TyCtxt<'tcx>, lit_input: LitToConstInput<'tcx>
         {
             let data = byte_sym.as_byte_str();
             let len = data.len();
+            #[cfg(target_os = "trueos")]
+            std::println!("TRUEOS rustc mir-constant: byte-slice allocation begin bytes={len}");
             let allocation = tcx.allocate_bytes_dedup(data, CTFE_ALLOC_SALT);
+            #[cfg(target_os = "trueos")]
+            std::println!("TRUEOS rustc mir-constant: byte-slice allocation complete bytes={len}");
             ConstValue::Slice { alloc_id: allocation, meta: len.try_into().unwrap() }
         }
         (ast::LitKind::ByteStr(byte_sym, _), ty::Ref(_, inner_ty, _)) if inner_ty.is_array() => {
-            let id = tcx.allocate_bytes_dedup(byte_sym.as_byte_str(), CTFE_ALLOC_SALT);
+            let data = byte_sym.as_byte_str();
+            #[cfg(target_os = "trueos")]
+            std::println!(
+                "TRUEOS rustc mir-constant: byte-array allocation begin bytes={}",
+                data.len(),
+            );
+            let id = tcx.allocate_bytes_dedup(data, CTFE_ALLOC_SALT);
+            #[cfg(target_os = "trueos")]
+            std::println!(
+                "TRUEOS rustc mir-constant: byte-array allocation complete bytes={}",
+                data.len(),
+            );
             ConstValue::Scalar(Scalar::from_pointer(id.into(), &tcx))
         }
         (ast::LitKind::CStr(byte_sym, _), ty::Ref(_, inner_ty, _)) if matches!(inner_ty.kind(), ty::Adt(def, _) if tcx.is_lang_item(def.did(), LangItem::CStr)) =>
         {
             let data = byte_sym.as_byte_str();
             let len = data.len();
+            #[cfg(target_os = "trueos")]
+            std::println!("TRUEOS rustc mir-constant: c-string allocation begin bytes={len}");
             let allocation = tcx.allocate_bytes_dedup(data, CTFE_ALLOC_SALT);
+            #[cfg(target_os = "trueos")]
+            std::println!("TRUEOS rustc mir-constant: c-string allocation complete bytes={len}");
             ConstValue::Slice { alloc_id: allocation, meta: len.try_into().unwrap() }
         }
         (ast::LitKind::Byte(n), ty::Uint(ty::UintTy::U8)) => {
