@@ -10,10 +10,11 @@ This archive is the exact `nightly-2026-07-10` toolchain:
 Blueprints build `rustc_driver_impl` from these sources so the compiler frontend
 is a native relocatable Blueprint module rather than an embedded Linux process.
 
-The bundled Cranelift source is built as an `rlib` and linked into the med+
-Blueprint. Its unused `rustc_driver` sysroot anchor is removed because the
-Blueprint links the same `rustc_driver_impl` graph directly. This keeps LLVM and
-the C++ runtime out of the initial native code-generation path.
+The bundled Cranelift source is built as an `rlib` and linked into the
+consolidated `rustc-min` Blueprint. Its unused `rustc_driver` sysroot anchor is
+removed because the Blueprint links the same `rustc_driver_impl` graph
+directly. This keeps LLVM and the C++ runtime out of the native code-generation
+path.
 
 The Blueprint build supplies the bootstrap identity environment and verifies the
 full rustc commit before compiling these sources.
