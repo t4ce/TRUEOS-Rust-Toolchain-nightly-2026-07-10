@@ -50,6 +50,13 @@ validates its imports, relocations, and `_start`, then publishes the raw
 Blueprint `/common/localcompile/local.bp`. Explicit compiler arguments retain
 the direct compiler-invocation path.
 
+The current managed source is `apps/gridpaper/src/rustc_oneshot.rs`: a
+self-contained 39×55 Gridpaper producer that submits one visible page and then
+parks cooperatively. It intentionally calls the Gridpaper CABI directly.
+Cranelift does not provide full-graph LTO, so compiling the complete Cargo
+Gridpaper application from metadata alone would leave upstream Rust symbols for
+a future in-process relocatable-link stage.
+
 ## Validated artifacts
 
 The consolidated package used by the successful 2026-07-28 bare-metal run is:

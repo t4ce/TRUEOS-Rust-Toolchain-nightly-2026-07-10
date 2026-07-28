@@ -68,6 +68,8 @@ pub extern "C" fn _start() {
     vsys::log_info("hello_world: rustc\n");
 }
 "#;
+const GRIDPAPER_APP_SOURCE: &str =
+    include_str!("/home/t4ce/REPOS/TRUEOS-Blueprints/apps/gridpaper/src/rustc_oneshot.rs");
 
 struct CompilerCallbacks;
 
@@ -379,10 +381,15 @@ fn persist_managed_local_source(source: &str) -> Result<usize, String> {
     Ok(persisted.len())
 }
 
+fn managed_gridpaper_source() -> String {
+    GRIDPAPER_APP_SOURCE.to_owned()
+}
+
 fn prepare_local_source() -> Result<(), String> {
     let directory = Path::new(LOCAL_COMPILE_DIR);
     fs::create_dir_all(directory)
         .map_err(|err| format!("create local compile directory {LOCAL_COMPILE_DIR}: {err}"))?;
+    let managed_gridpaper = managed_gridpaper_source();
 
     match fs::metadata(LOCAL_SOURCE) {
         Ok(metadata) => {
@@ -412,17 +419,19 @@ fn prepare_local_source() -> Result<(), String> {
                 Some("v2")
             } else if existing.as_slice() == MANAGED_LOCAL_SOURCE_V3.as_bytes() {
                 Some("v3")
+            } else if existing.as_slice() == MANAGED_LOCAL_SOURCE_V4.as_bytes() {
+                Some("v4")
             } else {
                 None
             };
             if let Some(previous_managed_seed) = previous_managed_seed {
-                let bytes = persist_managed_local_source(MANAGED_LOCAL_SOURCE_V4)?;
+                let bytes = persist_managed_local_source(&managed_gridpaper)?;
                 println!(
-                    "TRUEOS rustc min: local source migrated path={LOCAL_SOURCE} managed_seed={previous_managed_seed}->v4 bytes={bytes}"
+                    "TRUEOS rustc min: local source migrated path={LOCAL_SOURCE} managed_seed={previous_managed_seed}->gridpaper-v1 bytes={bytes}"
                 );
             } else {
-                let source_kind = if existing.as_slice() == MANAGED_LOCAL_SOURCE_V4.as_bytes() {
-                    "managed_seed=v4"
+                let source_kind = if existing.as_slice() == managed_gridpaper.as_bytes() {
+                    "managed_seed=gridpaper-v1"
                 } else {
                     "user_owned=1"
                 };
@@ -433,9 +442,9 @@ fn prepare_local_source() -> Result<(), String> {
             }
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            let bytes = persist_managed_local_source(MANAGED_LOCAL_SOURCE_V4)?;
+            let bytes = persist_managed_local_source(&managed_gridpaper)?;
             println!(
-                "TRUEOS rustc min: local source seeded path={LOCAL_SOURCE} managed_seed=v4 bytes={bytes}"
+                "TRUEOS rustc min: local source seeded path={LOCAL_SOURCE} managed_seed=gridpaper-v1 bytes={bytes}"
             );
         }
         Err(err) => {
@@ -528,7 +537,7 @@ fn compile(
         // broker and would otherwise resolve the application path twice.
         prepare_local_source()?;
         println!(
-            "TRUEOS rustc min: local compile contract=v8 realm=compiler-carrier extern-mode=roots+search api=trueos::vsys::log_info mono-shape=one predefine-boundaries=1 source={LOCAL_SOURCE} object={LOCAL_OBJECT} output={}",
+            "TRUEOS rustc min: local compile contract=v9 realm=compiler-carrier seed=gridpaper-v1 extern-mode=roots+search api=trueos::gridpaper source={LOCAL_SOURCE} object={LOCAL_OBJECT} output={}",
             blueprint::OUTPUT_PATH
         );
     }

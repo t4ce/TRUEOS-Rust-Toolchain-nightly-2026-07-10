@@ -9,7 +9,14 @@ use object::{
 const BLUEPRINT_HEADER_LEN: usize = 24;
 const BLUEPRINT_VERSION: u16 = 1;
 const BLUEPRINT_PAYLOAD_RAW: u16 = 1;
-const OPTIONAL_IMPORT: &str = "trueos_cabi_write";
+const GRIDPAPER_IMPORTS: &[&str] = &[
+    "memcpy",
+    "memset",
+    "trueos_cabi_gridpaper_snapshot_submit",
+    "trueos_cabi_poll_once",
+    "trueos_cabi_sleep_ms",
+    "trueos_cabi_write",
+];
 
 pub const OUTPUT_PATH: &str = "/common/localcompile/local.bp";
 
@@ -158,7 +165,7 @@ fn validate_object(bytes: &[u8]) -> Result<u64, String> {
 }
 
 fn validate_imports(file: &object::File<'_>) -> Result<(), String> {
-    let mut expected_count = 0usize;
+    let mut imports = std::collections::BTreeSet::new();
     for symbol in file.symbols() {
         if !symbol.is_undefined() {
             continue;
@@ -169,24 +176,32 @@ fn validate_imports(file: &object::File<'_>) -> Result<(), String> {
         if name.is_empty() {
             continue;
         }
-        if name != OPTIONAL_IMPORT {
+        if !is_gridpaper_import(name) {
             return Err(format!(
                 "compiler-produced object has unsupported import `{name}`"
             ));
         }
         if symbol.is_weak() || !symbol.is_global() {
             return Err(format!(
-                "compiler-produced `{OPTIONAL_IMPORT}` import is not strong and global"
+                "compiler-produced `{name}` import is not strong and global"
             ));
         }
-        expected_count += 1;
+        if !imports.insert(name) {
+            return Err(format!(
+                "compiler-produced object imports `{name}` more than once"
+            ));
+        }
     }
-    if expected_count > 1 {
-        return Err(format!(
-            "compiler-produced object imports `{OPTIONAL_IMPORT}` {expected_count} times; expected at most once"
+    if !imports.contains("trueos_cabi_gridpaper_snapshot_submit") {
+        return Err(String::from(
+            "compiler-produced object is missing the Gridpaper snapshot import",
         ));
     }
     Ok(())
+}
+
+fn is_gridpaper_import(name: &str) -> bool {
+    GRIDPAPER_IMPORTS.contains(&name)
 }
 
 fn validate_relocations(file: &object::File<'_>) -> Result<(), String> {
