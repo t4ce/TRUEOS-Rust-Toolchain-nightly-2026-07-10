@@ -110,9 +110,26 @@ pub(crate) fn import_function<'tcx>(
     module: &mut dyn Module,
     inst: Instance<'tcx>,
 ) -> FuncId {
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cgclif-import: symbol begin");
     let name = tcx.symbol_name(inst).name;
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cgclif-import: symbol complete name={name}");
     let sig = get_function_sig(tcx, module.target_config().default_call_conv, inst);
-    match module.declare_function(name, Linkage::Import, &sig) {
+    #[cfg(target_os = "trueos")]
+    {
+        println!("TRUEOS rustc cgclif-import: module lookup begin name={name}");
+        let existing = module.get_name(name).is_some();
+        println!(
+            "TRUEOS rustc cgclif-import: module lookup complete name={name} existing={existing}"
+        );
+    }
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cgclif-import: module declare begin name={name}");
+    let declaration = module.declare_function(name, Linkage::Import, &sig);
+    #[cfg(target_os = "trueos")]
+    println!("TRUEOS rustc cgclif-import: module declare complete name={name}");
+    match declaration {
         Ok(func_id) => func_id,
         Err(ModuleError::IncompatibleDeclaration(_)) => tcx.dcx().fatal(format!(
             "attempt to declare `{name}` as function, but it was already declared as static"
@@ -128,8 +145,16 @@ pub(crate) fn import_function<'tcx>(
 impl<'tcx> FunctionCx<'_, '_, 'tcx> {
     /// Instance must be monomorphized
     pub(crate) fn get_function_ref(&mut self, inst: Instance<'tcx>) -> FuncRef {
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc cgclif-function-ref: import begin");
         let func_id = import_function(self.tcx, self.module, inst);
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc cgclif-function-ref: import complete");
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc cgclif-function-ref: declare-in-func begin");
         let func_ref = self.module.declare_func_in_func(func_id, self.bcx.func);
+        #[cfg(target_os = "trueos")]
+        println!("TRUEOS rustc cgclif-function-ref: declare-in-func complete");
 
         if self.clif_comments.enabled() {
             self.add_comment(func_ref, format!("{:?}", inst));

@@ -19,7 +19,11 @@ const TARGET_TRIPLE: &str = "x86_64-unknown-trueos";
 const SYSROOT: &str = "rustc-sysroot";
 const SYSROOT_MANIFEST: &str = "rustc-sysroot/TRUEOS_SYSROOT_MANIFEST";
 const PAYLOAD_LIB: &str = "rustc-payload/lib";
-const TRUEOS_HELLO_SOURCE: &str = r#"#![no_std]
+const LOCAL_COMPILE_DIR: &str = "/common/localcompile";
+const LOCAL_SOURCE: &str = "/common/localcompile/main.rs";
+const LOCAL_OBJECT: &str = "/common/localcompile/local.o";
+const MAX_LOCAL_SOURCE_BYTES: u64 = 4 * 1024 * 1024;
+const MANAGED_LOCAL_SOURCE_V1: &str = r#"#![no_std]
 #![no_main]
 
 unsafe extern "C" {
@@ -28,16 +32,34 @@ unsafe extern "C" {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn _start() {
-    let message = b"hello_world: rustc\n";
+    let message: &[u8] = b"hello_world: rustc\n";
     unsafe {
         trueos_cabi_write(1, message.as_ptr(), message.len());
     }
 }
 "#;
+const MANAGED_LOCAL_SOURCE_V2: &str = r#"#![no_std]
+#![no_main]
 
-struct CompilerCallbacks {
-    in_memory_smoke: bool,
+use trueos::vsys;
+
+#[unsafe(no_mangle)]
+pub extern "C" fn _start() {
+    vsys::log_info("hello_world: rustc trueos-api\n");
 }
+"#;
+const MANAGED_LOCAL_SOURCE_V3: &str = r#"#![no_std]
+#![no_main]
+
+use trueos::logl::{self, level};
+
+#[unsafe(no_mangle)]
+pub extern "C" fn _start() {
+    logl::log(level::INFO, "hello_world: rustc logl");
+}
+"#;
+
+struct CompilerCallbacks;
 
 impl rustc_driver_impl::Callbacks for CompilerCallbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
@@ -45,12 +67,6 @@ impl rustc_driver_impl::Callbacks for CompilerCallbacks {
         config.make_codegen_backend = Some(Box::new(|_| {
             rustc_codegen_cranelift::__rustc_codegen_backend()
         }));
-        if self.in_memory_smoke {
-            config.input = rustc_session::config::Input::Str {
-                name: rustc_span::FileName::Custom("rustc-work/trueos-hello.rs".into()),
-                input: TRUEOS_HELLO_SOURCE.to_owned(),
-            };
-        }
         config.psess_created = Some(Box::new(|_| {
             println!("TRUEOS rustc min: compiler session created");
         }));
@@ -340,31 +356,106 @@ fn checked_metadata_file(path: &str, label: &str) -> Result<u64, String> {
     Ok(metadata.len())
 }
 
+fn persist_managed_local_source(source: &str) -> Result<usize, String> {
+    fs::write(LOCAL_SOURCE, source.as_bytes())
+        .map_err(|err| format!("write managed local compile source {LOCAL_SOURCE}: {err}"))?;
+    let persisted = fs::read(LOCAL_SOURCE)
+        .map_err(|err| format!("verify managed local compile source {LOCAL_SOURCE}: {err}"))?;
+    if persisted.as_slice() != source.as_bytes() {
+        return Err(format!(
+            "managed local compile source readback mismatch: {LOCAL_SOURCE}"
+        ));
+    }
+    Ok(persisted.len())
+}
+
+fn prepare_local_source() -> Result<(), String> {
+    let directory = Path::new(LOCAL_COMPILE_DIR);
+    fs::create_dir_all(directory)
+        .map_err(|err| format!("create local compile directory {LOCAL_COMPILE_DIR}: {err}"))?;
+
+    match fs::metadata(LOCAL_SOURCE) {
+        Ok(metadata) => {
+            if !metadata.is_file() {
+                return Err(format!(
+                    "local compile source is not a file: {LOCAL_SOURCE}"
+                ));
+            }
+            if metadata.len() == 0 || metadata.len() > MAX_LOCAL_SOURCE_BYTES {
+                return Err(format!(
+                    "local compile source size is outside 1..={MAX_LOCAL_SOURCE_BYTES}: path={LOCAL_SOURCE} bytes={}",
+                    metadata.len()
+                ));
+            }
+            let existing = fs::read(LOCAL_SOURCE)
+                .map_err(|err| format!("read local compile source {LOCAL_SOURCE}: {err}"))?;
+            if existing.is_empty() || existing.len() as u64 > MAX_LOCAL_SOURCE_BYTES {
+                return Err(format!(
+                    "local compile source changed outside 1..={MAX_LOCAL_SOURCE_BYTES} bytes while reading: path={LOCAL_SOURCE} bytes={}",
+                    existing.len()
+                ));
+            }
+            let previous_managed_seed = if existing.as_slice() == MANAGED_LOCAL_SOURCE_V1.as_bytes()
+            {
+                Some("v1")
+            } else if existing.as_slice() == MANAGED_LOCAL_SOURCE_V2.as_bytes() {
+                Some("v2")
+            } else {
+                None
+            };
+            if let Some(previous_managed_seed) = previous_managed_seed {
+                let bytes = persist_managed_local_source(MANAGED_LOCAL_SOURCE_V3)?;
+                println!(
+                    "TRUEOS rustc min: local source migrated path={LOCAL_SOURCE} managed_seed={previous_managed_seed}->v3 bytes={bytes}"
+                );
+            } else {
+                let source_kind = if existing.as_slice() == MANAGED_LOCAL_SOURCE_V3.as_bytes() {
+                    "managed_seed=v3"
+                } else {
+                    "user_owned=1"
+                };
+                println!(
+                    "TRUEOS rustc min: local source existing path={LOCAL_SOURCE} bytes={} {source_kind}",
+                    existing.len()
+                );
+            }
+        }
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            let bytes = persist_managed_local_source(MANAGED_LOCAL_SOURCE_V3)?;
+            println!(
+                "TRUEOS rustc min: local source seeded path={LOCAL_SOURCE} managed_seed=v3 bytes={bytes}"
+            );
+        }
+        Err(err) => {
+            return Err(format!(
+                "inspect local compile source {LOCAL_SOURCE}: {err}"
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn compiler_args(mut args: Vec<String>) -> Result<Vec<String>, String> {
-    let default_smoke = args.len() == 1;
-    if default_smoke {
-        let work = Path::new("rustc-work");
-        fs::create_dir_all(work).map_err(|err| format!("create rustc-work: {err}"))?;
-        let source = work.join("trueos-hello.rs");
+    let local_compile = args.len() == 1;
+    if local_compile {
         args.extend([
-            source.to_string_lossy().into_owned(),
+            LOCAL_SOURCE.into(),
             "--crate-name".into(),
-            "trueos_rustc_hello_smoke".into(),
+            "trueos_local".into(),
             "--edition=2024".into(),
             "--crate-type".into(),
             "lib".into(),
             "--emit=obj".into(),
             "-Cpanic=abort".into(),
             "-Cdebuginfo=0".into(),
+            "-Copt-level=2".into(),
             "-Ccodegen-units=1".into(),
             "-Zno-parallel-backend".into(),
             "-o".into(),
-            work.join("trueos-rustc-hello.o")
-                .to_string_lossy()
-                .into_owned(),
+            LOCAL_OBJECT.into(),
         ]);
     }
-    if default_smoke {
+    if local_compile {
         let manifest = EmbeddedManifest::load()?;
         for crate_name in ["core", "compiler_builtins", "alloc"] {
             if has_extern_crate(&args, crate_name) {
@@ -398,6 +489,12 @@ fn compiler_args(mut args: Vec<String>) -> Result<Vec<String>, String> {
                 format!("noprelude,nounused:{}={path}", artifact.crate_name),
             ]);
         }
+        // Direct `--extern` entries expose crate roots to the source, but rustc
+        // locates the dependencies recorded inside their metadata through a
+        // dependency search path. Keep the embedded payload as that complete
+        // search closure so roots such as `trueos` can resolve `v`, `spin`, and
+        // their remaining transitive metadata.
+        args.extend(["-L".into(), format!("dependency={PAYLOAD_LIB}")]);
         for direct in &manifest.direct_externs {
             let path = format!("{PAYLOAD_LIB}/{}", direct.file_name);
             let bytes = checked_metadata_file(&path, direct.alias.as_str())?;
@@ -433,17 +530,27 @@ fn compiler_args(mut args: Vec<String>) -> Result<Vec<String>, String> {
 
 fn compile(
     args: Vec<String>,
-    in_memory_smoke: bool,
+    local_compile: bool,
 ) -> Result<Option<blueprint::PublishedBlueprint>, String> {
+    if local_compile {
+        // Keep the entire `/common` handoff on the compiler carrier. Hull
+        // synchronous I/O crosses VMCALL before reaching the same filesystem
+        // broker and would otherwise resolve the application path twice.
+        prepare_local_source()?;
+        println!(
+            "TRUEOS rustc min: local compile contract=v5 realm=compiler-carrier payload-search=1 api=trueos::logl::log borrowed-str-fast-path=1 source={LOCAL_SOURCE} object={LOCAL_OBJECT} output={}",
+            blueprint::OUTPUT_PATH
+        );
+    }
     println!("TRUEOS rustc min: compiler entered");
     let exit = rustc_driver_impl::catch_with_exit_code(|| {
-        rustc_driver_impl::run_compiler(&args, &mut CompilerCallbacks { in_memory_smoke })
+        rustc_driver_impl::run_compiler(&args, &mut CompilerCallbacks)
     });
     if exit != ExitCode::SUCCESS {
         return Err(format!("rustc exited with {exit:?}"));
     }
-    if in_memory_smoke {
-        blueprint::publish(Path::new("rustc-work/trueos-rustc-hello.o")).map(Some)
+    if local_compile {
+        blueprint::publish(Path::new(LOCAL_OBJECT)).map(Some)
     } else {
         Ok(None)
     }
@@ -451,7 +558,7 @@ fn compile(
 
 fn run(process_args: Vec<String>) -> bool {
     println!("TRUEOS rustc {TIER}: nightly-2026-07-10 af3d95584 workers={WORKERS}");
-    let default_smoke = process_args.len() == 1;
+    let local_compile = process_args.len() == 1;
     let args = match compiler_args(process_args) {
         Ok(args) => args,
         Err(err) => {
@@ -464,13 +571,13 @@ fn run(process_args: Vec<String>) -> bool {
         .build()
         .expect("build TRUEOS Tokio runtime");
     let result = runtime.block_on(async move {
-        tokio::task::spawn_blocking(move || compile(args, default_smoke))
+        tokio::task::spawn_blocking(move || compile(args, local_compile))
             .await
             .map_err(|err| format!("compiler lane failed: {err}"))?
     });
     match result {
         Ok(Some(published)) => {
-            println!("TRUEOS rustc {TIER}: trueos hello Blueprint compile passed");
+            println!("TRUEOS rustc {TIER}: file-backed local Blueprint compile passed");
             println!(
                 "TRUEOS rustc {TIER}: Blueprint stored path={} bytes={} object={} entry=sec:{}+0x{:x}",
                 blueprint::OUTPUT_PATH,

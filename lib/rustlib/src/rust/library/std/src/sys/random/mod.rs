@@ -79,6 +79,10 @@ cfg_select! {
         mod teeos;
         pub use teeos::fill_bytes;
     }
+    target_os = "trueos" => {
+        mod trueos;
+        pub use trueos::fill_bytes;
+    }
     target_os = "trusty" => {
         mod trusty;
         pub use trusty::fill_bytes;
@@ -105,7 +109,6 @@ cfg_select! {
     }
     any(
         all(target_family = "wasm", target_os = "unknown"),
-        target_os = "trueos",
         target_os = "xous",
         target_os = "vexos",
     ) => {
@@ -119,7 +122,6 @@ cfg_select! {
 
 #[cfg(not(any(
     target_os = "linux",
-    target_os = "trueos",
     target_os = "android",
     all(target_family = "wasm", target_os = "unknown"),
     all(target_os = "wasi", not(target_env = "p1")),

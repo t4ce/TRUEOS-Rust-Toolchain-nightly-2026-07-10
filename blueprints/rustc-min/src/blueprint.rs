@@ -9,9 +9,9 @@ use object::{
 const BLUEPRINT_HEADER_LEN: usize = 24;
 const BLUEPRINT_VERSION: u16 = 1;
 const BLUEPRINT_PAYLOAD_RAW: u16 = 1;
-const EXPECTED_IMPORT: &str = "trueos_cabi_write";
+const OPTIONAL_IMPORT: &str = "trueos_cabi_write";
 
-pub const OUTPUT_PATH: &str = "/common/localcompile/trueos-rustc-hello.bp";
+pub const OUTPUT_PATH: &str = "/common/localcompile/local.bp";
 
 pub struct PublishedBlueprint {
     pub blueprint_bytes: usize,
@@ -169,21 +169,21 @@ fn validate_imports(file: &object::File<'_>) -> Result<(), String> {
         if name.is_empty() {
             continue;
         }
-        if name != EXPECTED_IMPORT {
+        if name != OPTIONAL_IMPORT {
             return Err(format!(
                 "compiler-produced object has unsupported import `{name}`"
             ));
         }
         if symbol.is_weak() || !symbol.is_global() {
             return Err(format!(
-                "compiler-produced `{EXPECTED_IMPORT}` import is not strong and global"
+                "compiler-produced `{OPTIONAL_IMPORT}` import is not strong and global"
             ));
         }
         expected_count += 1;
     }
-    if expected_count != 1 {
+    if expected_count > 1 {
         return Err(format!(
-            "compiler-produced object imports `{EXPECTED_IMPORT}` {expected_count} times; expected exactly once"
+            "compiler-produced object imports `{OPTIONAL_IMPORT}` {expected_count} times; expected at most once"
         ));
     }
     Ok(())
