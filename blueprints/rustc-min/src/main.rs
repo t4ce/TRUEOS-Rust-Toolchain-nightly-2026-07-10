@@ -58,6 +58,16 @@ pub extern "C" fn _start() {
     logl::log(level::INFO, "hello_world: rustc logl");
 }
 "#;
+const MANAGED_LOCAL_SOURCE_V4: &str = r#"#![no_std]
+#![no_main]
+
+use trueos::vsys;
+
+#[unsafe(no_mangle)]
+pub extern "C" fn _start() {
+    vsys::log_info("hello_world: rustc\n");
+}
+"#;
 
 struct CompilerCallbacks;
 
@@ -400,17 +410,19 @@ fn prepare_local_source() -> Result<(), String> {
                 Some("v1")
             } else if existing.as_slice() == MANAGED_LOCAL_SOURCE_V2.as_bytes() {
                 Some("v2")
+            } else if existing.as_slice() == MANAGED_LOCAL_SOURCE_V3.as_bytes() {
+                Some("v3")
             } else {
                 None
             };
             if let Some(previous_managed_seed) = previous_managed_seed {
-                let bytes = persist_managed_local_source(MANAGED_LOCAL_SOURCE_V3)?;
+                let bytes = persist_managed_local_source(MANAGED_LOCAL_SOURCE_V4)?;
                 println!(
-                    "TRUEOS rustc min: local source migrated path={LOCAL_SOURCE} managed_seed={previous_managed_seed}->v3 bytes={bytes}"
+                    "TRUEOS rustc min: local source migrated path={LOCAL_SOURCE} managed_seed={previous_managed_seed}->v4 bytes={bytes}"
                 );
             } else {
-                let source_kind = if existing.as_slice() == MANAGED_LOCAL_SOURCE_V3.as_bytes() {
-                    "managed_seed=v3"
+                let source_kind = if existing.as_slice() == MANAGED_LOCAL_SOURCE_V4.as_bytes() {
+                    "managed_seed=v4"
                 } else {
                     "user_owned=1"
                 };
@@ -421,9 +433,9 @@ fn prepare_local_source() -> Result<(), String> {
             }
         }
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-            let bytes = persist_managed_local_source(MANAGED_LOCAL_SOURCE_V3)?;
+            let bytes = persist_managed_local_source(MANAGED_LOCAL_SOURCE_V4)?;
             println!(
-                "TRUEOS rustc min: local source seeded path={LOCAL_SOURCE} managed_seed=v3 bytes={bytes}"
+                "TRUEOS rustc min: local source seeded path={LOCAL_SOURCE} managed_seed=v4 bytes={bytes}"
             );
         }
         Err(err) => {
@@ -466,34 +478,12 @@ fn compiler_args(mut args: Vec<String>) -> Result<Vec<String>, String> {
             println!("TRUEOS rustc min: {crate_name} metadata {metadata}");
             args.extend(["--extern".into(), format!("{crate_name}={metadata}")]);
         }
-        for artifact in &manifest.sysroot {
-            if matches!(
-                artifact.crate_name.as_str(),
-                "core" | "compiler_builtins" | "alloc"
-            ) {
-                continue;
-            }
-            let path = format!(
-                "{SYSROOT}/lib/rustlib/{TARGET_TRIPLE}/lib/{}",
-                artifact.file_name
-            );
-            args.extend([
-                "--extern".into(),
-                format!("noprelude,nounused:{}={path}", artifact.crate_name),
-            ]);
-        }
-        for artifact in &manifest.payload {
-            let path = format!("{PAYLOAD_LIB}/{}", artifact.file_name);
-            args.extend([
-                "--extern".into(),
-                format!("noprelude,nounused:{}={path}", artifact.crate_name),
-            ]);
-        }
-        // Direct `--extern` entries expose crate roots to the source, but rustc
-        // locates the dependencies recorded inside their metadata through a
-        // dependency search path. Keep the embedded payload as that complete
-        // search closure so roots such as `trueos` can resolve `v`, `spin`, and
-        // their remaining transitive metadata.
+        // Keep command-line externs limited to roots used by the source.
+        // `--sysroot` supplies the authenticated standard-library closure and
+        // this dependency path supplies the embedded application/API closure.
+        // Passing every transitive artifact as a command-line extern activates
+        // rustc's exact-path handling for duplicate crate names and defeats
+        // normal hashed dependency selection.
         args.extend(["-L".into(), format!("dependency={PAYLOAD_LIB}")]);
         for direct in &manifest.direct_externs {
             let path = format!("{PAYLOAD_LIB}/{}", direct.file_name);
@@ -538,7 +528,7 @@ fn compile(
         // broker and would otherwise resolve the application path twice.
         prepare_local_source()?;
         println!(
-            "TRUEOS rustc min: local compile contract=v5 realm=compiler-carrier payload-search=1 api=trueos::logl::log borrowed-str-fast-path=1 source={LOCAL_SOURCE} object={LOCAL_OBJECT} output={}",
+            "TRUEOS rustc min: local compile contract=v8 realm=compiler-carrier extern-mode=roots+search api=trueos::vsys::log_info mono-shape=one predefine-boundaries=1 source={LOCAL_SOURCE} object={LOCAL_OBJECT} output={}",
             blueprint::OUTPUT_PATH
         );
     }

@@ -28,22 +28,40 @@ fn predefine_mono_items<'tcx>(
                     let _inst_guard = crate::PrintOnPanic(|| format!("{:?} {}", instance, name));
                     let sig =
                         get_function_sig(tcx, module.target_config().default_call_conv, instance);
+                    println!(
+                        "TRUEOS rustc cranelift-predefine: linkage begin symbol={name}"
+                    );
                     let linkage = crate::linkage::get_clif_linkage(
                         mono_item,
                         data.linkage,
                         data.visibility,
                         is_compiler_builtins,
                     );
+                    println!(
+                        "TRUEOS rustc cranelift-predefine: linkage complete symbol={name}"
+                    );
+                    println!(
+                        "TRUEOS rustc cranelift-predefine: attrs begin symbol={name}"
+                    );
                     let is_naked = tcx
                         .codegen_instance_attrs(instance.def)
                         .flags
                         .contains(CodegenFnAttrFlags::NAKED);
+                    println!(
+                        "TRUEOS rustc cranelift-predefine: attrs complete symbol={name} naked={is_naked}"
+                    );
                     if is_naked {
                         // Naked functions are defined in a separate object
                         // file, so they can be declared on the fly.
                         continue;
                     }
+                    println!(
+                        "TRUEOS rustc cranelift-predefine: declare begin symbol={name}"
+                    );
                     module.declare_function(name, linkage, &sig).unwrap();
+                    println!(
+                        "TRUEOS rustc cranelift-predefine: declare complete symbol={name}"
+                    );
                 }
                 MonoItem::Static(_) | MonoItem::GlobalAsm(_) => {}
             }
