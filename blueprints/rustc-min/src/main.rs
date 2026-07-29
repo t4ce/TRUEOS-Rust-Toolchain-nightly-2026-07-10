@@ -385,6 +385,44 @@ fn managed_gridpaper_source() -> String {
     GRIDPAPER_APP_SOURCE.to_owned()
 }
 
+fn is_managed_gridpaper_v1(source: &[u8]) -> bool {
+    source.len() == 3302
+        && core::str::from_utf8(source).is_ok_and(|source| {
+            source.starts_with("#![no_std]\n#![no_main]\n")
+                && source.contains("let mut page = [0_u8; PAGE_BYTES];")
+                && source.contains("fn draw_rustc_gridpaper(")
+                && source.contains("RUSTC ONE-SHOT GRIDPAPER")
+                && source.contains("compiled inside TRUEOS")
+                && source.contains("rustc one-shot: Gridpaper snapshot submitted")
+        })
+}
+
+fn is_managed_gridpaper_v2(source: &[u8]) -> bool {
+    source.len() == 3361
+        && core::str::from_utf8(source).is_ok_and(|source| {
+            source.starts_with("#![no_std]\n#![no_main]\n")
+                && source.contains("static mut PAGE: [u8; PAGE_BYTES]")
+                && source.contains("let page = unsafe { &mut *(&raw mut PAGE) };")
+                && source.contains("colors[index % colors.len()]")
+                && source.contains("RUSTC ONE-SHOT GRIDPAPER")
+                && source.contains("compiled inside TRUEOS")
+                && source.contains("rustc one-shot: Gridpaper snapshot submitted")
+        })
+}
+
+fn is_managed_gridpaper_v3(source: &[u8]) -> bool {
+    source.len() == 3505
+        && core::str::from_utf8(source).is_ok_and(|source| {
+            source.starts_with("#![no_std]\n#![no_main]\n")
+                && source.contains("static mut PAGE: [u8; PAGE_BYTES]")
+                && source.contains("let page = (&raw mut PAGE).cast::<u8>();")
+                && source.contains("*colors.as_ptr().add(index % colors.len())")
+                && source.contains("RUSTC ONE-SHOT GRIDPAPER")
+                && source.contains("compiled inside TRUEOS")
+                && source.contains("rustc one-shot: Gridpaper snapshot submitted")
+        })
+}
+
 fn prepare_local_source() -> Result<(), String> {
     let directory = Path::new(LOCAL_COMPILE_DIR);
     fs::create_dir_all(directory)
@@ -412,8 +450,9 @@ fn prepare_local_source() -> Result<(), String> {
                     existing.len()
                 ));
             }
-            let previous_managed_seed = if existing.as_slice() == MANAGED_LOCAL_SOURCE_V1.as_bytes()
-            {
+            let previous_managed_seed = if existing.as_slice() == managed_gridpaper.as_bytes() {
+                None
+            } else if existing.as_slice() == MANAGED_LOCAL_SOURCE_V1.as_bytes() {
                 Some("v1")
             } else if existing.as_slice() == MANAGED_LOCAL_SOURCE_V2.as_bytes() {
                 Some("v2")
@@ -421,17 +460,23 @@ fn prepare_local_source() -> Result<(), String> {
                 Some("v3")
             } else if existing.as_slice() == MANAGED_LOCAL_SOURCE_V4.as_bytes() {
                 Some("v4")
+            } else if is_managed_gridpaper_v1(existing.as_slice()) {
+                Some("gridpaper-v1")
+            } else if is_managed_gridpaper_v2(existing.as_slice()) {
+                Some("gridpaper-v2")
+            } else if is_managed_gridpaper_v3(existing.as_slice()) {
+                Some("gridpaper-v3")
             } else {
                 None
             };
             if let Some(previous_managed_seed) = previous_managed_seed {
                 let bytes = persist_managed_local_source(&managed_gridpaper)?;
                 println!(
-                    "TRUEOS rustc min: local source migrated path={LOCAL_SOURCE} managed_seed={previous_managed_seed}->gridpaper-v1 bytes={bytes}"
+                    "TRUEOS rustc min: local source migrated path={LOCAL_SOURCE} managed_seed={previous_managed_seed}->gridpaper-v4 bytes={bytes}"
                 );
             } else {
                 let source_kind = if existing.as_slice() == managed_gridpaper.as_bytes() {
-                    "managed_seed=gridpaper-v1"
+                    "managed_seed=gridpaper-v4"
                 } else {
                     "user_owned=1"
                 };
@@ -444,7 +489,7 @@ fn prepare_local_source() -> Result<(), String> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             let bytes = persist_managed_local_source(&managed_gridpaper)?;
             println!(
-                "TRUEOS rustc min: local source seeded path={LOCAL_SOURCE} managed_seed=gridpaper-v1 bytes={bytes}"
+                "TRUEOS rustc min: local source seeded path={LOCAL_SOURCE} managed_seed=gridpaper-v4 bytes={bytes}"
             );
         }
         Err(err) => {
@@ -469,7 +514,7 @@ fn compiler_args(mut args: Vec<String>) -> Result<Vec<String>, String> {
             "--emit=obj".into(),
             "-Cpanic=abort".into(),
             "-Cdebuginfo=0".into(),
-            "-Copt-level=2".into(),
+            "-Copt-level=1".into(),
             "-Ccodegen-units=1".into(),
             "-Zno-parallel-backend".into(),
             "-o".into(),
@@ -537,7 +582,7 @@ fn compile(
         // broker and would otherwise resolve the application path twice.
         prepare_local_source()?;
         println!(
-            "TRUEOS rustc min: local compile contract=v9 realm=compiler-carrier seed=gridpaper-v1 extern-mode=roots+search api=trueos::gridpaper source={LOCAL_SOURCE} object={LOCAL_OBJECT} output={}",
+            "TRUEOS rustc min: local compile contract=v15 realm=compiler-carrier seed=gridpaper-v4 storage=static-bss cg-context=fresh-per-function core-panic=bounds-check-portal opt-level=1 extern-mode=roots+search api=trueos::gridpaper source={LOCAL_SOURCE} object={LOCAL_OBJECT} output={}",
             blueprint::OUTPUT_PATH
         );
     }

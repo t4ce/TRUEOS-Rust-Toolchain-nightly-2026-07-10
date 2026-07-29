@@ -308,9 +308,24 @@ fn run_passes_inner<'tcx>(
         for pass in passes {
             let pass_name = pass.name();
 
+            #[cfg(target_os = "trueos")]
+            std::println!(
+                "TRUEOS rustc mir-pass: eligibility begin pass={pass_name} def={:?}",
+                body.source.def_id(),
+            );
             if !should_run_pass(tcx, *pass, optimizations) {
+                #[cfg(target_os = "trueos")]
+                std::println!(
+                    "TRUEOS rustc mir-pass: eligibility skipped pass={pass_name} def={:?}",
+                    body.source.def_id(),
+                );
                 continue;
             };
+            #[cfg(target_os = "trueos")]
+            std::println!(
+                "TRUEOS rustc mir-pass: eligibility enabled pass={pass_name} def={:?}",
+                body.source.def_id(),
+            );
 
             if is_optimization_stage(body, phase_change, optimizations)
                 && let Some(limit) = &tcx.sess.opts.unstable_opts.mir_opt_bisect_limit
@@ -372,7 +387,20 @@ fn run_passes_inner<'tcx>(
         }
     }
 
+    #[cfg(target_os = "trueos")]
+    std::println!(
+        "TRUEOS rustc mir-pass: pass loop complete def={:?} phase={:?}",
+        body.source.def_id(),
+        body.phase,
+    );
     if let Some(new_phase) = phase_change {
+        #[cfg(target_os = "trueos")]
+        std::println!(
+            "TRUEOS rustc mir-pass: phase change begin def={:?} old={:?} new={:?}",
+            body.source.def_id(),
+            body.phase,
+            new_phase,
+        );
         if body.phase >= new_phase {
             panic!("Invalid MIR phase transition from {:?} to {:?}", body.phase, new_phase);
         }
@@ -380,21 +408,66 @@ fn run_passes_inner<'tcx>(
         body.phase = new_phase;
         body.pass_count = 0;
 
+        #[cfg(target_os = "trueos")]
+        std::println!(
+            "TRUEOS rustc mir-pass: phase dump begin def={:?} phase={:?}",
+            body.source.def_id(),
+            body.phase,
+        );
         dump_mir_for_phase_change(tcx, body);
+        #[cfg(target_os = "trueos")]
+        std::println!(
+            "TRUEOS rustc mir-pass: phase dump complete def={:?} phase={:?}",
+            body.source.def_id(),
+            body.phase,
+        );
 
         let validate =
             (validate_each & tcx.sess.opts.unstable_opts.validate_mir & !body.should_skip())
                 || new_phase == MirPhase::Runtime(RuntimePhase::Optimized);
         let lint = tcx.sess.opts.unstable_opts.lint_mir & !body.should_skip();
+        #[cfg(target_os = "trueos")]
+        std::println!(
+            "TRUEOS rustc mir-pass: phase checks def={:?} validate={} lint={}",
+            body.source.def_id(),
+            validate,
+            lint,
+        );
         if validate {
+            #[cfg(target_os = "trueos")]
+            std::println!(
+                "TRUEOS rustc mir-pass: phase validation begin def={:?}",
+                body.source.def_id(),
+            );
             validate_body(tcx, body, format!("after phase change to {}", new_phase.name()));
+            #[cfg(target_os = "trueos")]
+            std::println!(
+                "TRUEOS rustc mir-pass: phase validation complete def={:?}",
+                body.source.def_id(),
+            );
         }
         if lint {
+            #[cfg(target_os = "trueos")]
+            std::println!(
+                "TRUEOS rustc mir-pass: phase lint begin def={:?}",
+                body.source.def_id(),
+            );
             lint_body(tcx, body, format!("after phase change to {}", new_phase.name()));
+            #[cfg(target_os = "trueos")]
+            std::println!(
+                "TRUEOS rustc mir-pass: phase lint complete def={:?}",
+                body.source.def_id(),
+            );
         }
 
         body.pass_count = 1;
     }
+    #[cfg(target_os = "trueos")]
+    std::println!(
+        "TRUEOS rustc mir-pass: manager complete def={:?} phase={:?}",
+        body.source.def_id(),
+        body.phase,
+    );
 }
 
 pub(super) fn validate_body<'tcx>(tcx: TyCtxt<'tcx>, body: &mut Body<'tcx>, when: String) {

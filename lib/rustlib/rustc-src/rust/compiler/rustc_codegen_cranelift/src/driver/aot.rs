@@ -349,7 +349,6 @@ fn compile_cgu(
             prof.clone(),
         )));
 
-        let mut cached_context = Context::new();
         for (function_index, codegened_func) in
             aot_module.codegened_functions.into_iter().enumerate()
         {
@@ -357,11 +356,16 @@ fn compile_cgu(
             println!(
                 "TRUEOS rustc cranelift: compile function begin name={cgu_name} index={function_index}"
             );
+            // Do not carry Cranelift machine-code state across functions on
+            // TrueOS. The compiler appliance has observed a deterministic
+            // stall in `Module::define_function` after several successful
+            // definitions when a cleared context is reused.
+            let mut function_context = Context::new();
             crate::base::compile_fn(
                 &prof,
                 &output_filenames,
                 should_write_ir,
-                &mut cached_context,
+                &mut function_context,
                 &mut aot_module.module,
                 aot_module.debug_context.as_mut(),
                 &mut aot_module.global_asm,

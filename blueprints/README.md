@@ -51,11 +51,13 @@ Blueprint `/common/localcompile/local.bp`. Explicit compiler arguments retain
 the direct compiler-invocation path.
 
 The current managed source is `apps/gridpaper/src/rustc_oneshot.rs`: a
-self-contained 39×55 Gridpaper producer that submits one visible page and then
-parks cooperatively. It intentionally calls the Gridpaper CABI directly.
-Cranelift does not provide full-graph LTO, so compiling the complete Cargo
-Gridpaper application from metadata alone would leave upstream Rust symbols for
-a future in-process relocatable-link stage.
+self-contained 39×55 Gridpaper producer that uses static zero-filled page
+storage, submits one visible page, and then parks cooperatively. Static storage
+keeps the 27,885-byte page out of `_start`'s automatic stack initialization. It
+intentionally calls the Gridpaper CABI directly. Cranelift does not provide
+full-graph LTO, so compiling the complete Cargo Gridpaper application from
+metadata alone would leave upstream Rust symbols for a future in-process
+relocatable-link stage.
 
 ## Validated artifacts
 

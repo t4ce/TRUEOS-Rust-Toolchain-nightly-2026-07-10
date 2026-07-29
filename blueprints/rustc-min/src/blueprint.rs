@@ -201,7 +201,11 @@ fn validate_imports(file: &object::File<'_>) -> Result<(), String> {
 }
 
 fn is_gridpaper_import(name: &str) -> bool {
-    GRIDPAPER_IMPORTS.contains(&name)
+    GRIDPAPER_IMPORTS.contains(&name) || is_core_panic_bounds_check_import(name)
+}
+
+fn is_core_panic_bounds_check_import(name: &str) -> bool {
+    name.starts_with("_R") && name.ends_with("_4core9panicking18panic_bounds_check")
 }
 
 fn validate_relocations(file: &object::File<'_>) -> Result<(), String> {
