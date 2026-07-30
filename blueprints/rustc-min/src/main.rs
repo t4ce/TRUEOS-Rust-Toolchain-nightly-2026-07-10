@@ -1,13 +1,20 @@
 #![feature(rustc_private)]
-#![no_main]
+#![cfg_attr(not(test), no_main)]
 
+mod archive_source;
 mod blueprint;
+mod blueprint_object;
+mod git_source;
+mod source_commands;
+mod source_db;
+mod source_loader;
 
 use core::ffi::c_char;
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 use std::process::ExitCode;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 const ARGV0: &str = "rustc-min";
 const MAX_COMPILER_ARGS: usize = 4096;
@@ -23,6 +30,7 @@ const LOCAL_COMPILE_DIR: &str = "/common/localcompile";
 const LOCAL_SOURCE: &str = "/common/localcompile/main.rs";
 const LOCAL_OBJECT: &str = "/common/localcompile/local.o";
 const MAX_LOCAL_SOURCE_BYTES: u64 = 4 * 1024 * 1024;
+static COMPILE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 const MANAGED_LOCAL_SOURCE_V1: &str = r#"#![no_std]
 #![no_main]
 
@@ -71,11 +79,26 @@ pub extern "C" fn _start() {
 const GRIDPAPER_APP_SOURCE: &str =
     include_str!("/home/t4ce/REPOS/TRUEOS-Blueprints/apps/gridpaper/src/rustc_oneshot.rs");
 
-struct CompilerCallbacks;
+struct CompilerCallbacks {
+    file_loader: Option<Box<dyn rustc_span::source_map::FileLoader + Send + Sync>>,
+}
+
+impl CompilerCallbacks {
+    fn filesystem() -> Self {
+        Self { file_loader: None }
+    }
+
+    fn database(loader: source_loader::SourceFileLoader) -> Self {
+        Self {
+            file_loader: Some(Box::new(loader)),
+        }
+    }
+}
 
 impl rustc_driver_impl::Callbacks for CompilerCallbacks {
     fn config(&mut self, config: &mut rustc_interface::Config) {
         println!("TRUEOS rustc min: compiler config entered");
+        config.file_loader = self.file_loader.take();
         config.make_codegen_backend = Some(Box::new(|_| {
             rustc_codegen_cranelift::__rustc_codegen_backend()
         }));
@@ -501,7 +524,10 @@ fn prepare_local_source() -> Result<(), String> {
     Ok(())
 }
 
-fn compiler_args(mut args: Vec<String>) -> Result<Vec<String>, String> {
+fn compiler_args(
+    mut args: Vec<String>,
+    use_embedded_dependencies: bool,
+) -> Result<Vec<String>, String> {
     let local_compile = args.len() == 1;
     if local_compile {
         args.extend([
@@ -521,7 +547,7 @@ fn compiler_args(mut args: Vec<String>) -> Result<Vec<String>, String> {
             LOCAL_OBJECT.into(),
         ]);
     }
-    if local_compile {
+    if use_embedded_dependencies {
         let manifest = EmbeddedManifest::load()?;
         for crate_name in ["core", "compiler_builtins", "alloc"] {
             if has_extern_crate(&args, crate_name) {
@@ -588,7 +614,7 @@ fn compile(
     }
     println!("TRUEOS rustc min: compiler entered");
     let exit = rustc_driver_impl::catch_with_exit_code(|| {
-        rustc_driver_impl::run_compiler(&args, &mut CompilerCallbacks)
+        rustc_driver_impl::run_compiler(&args, &mut CompilerCallbacks::filesystem())
     });
     if exit != ExitCode::SUCCESS {
         return Err(format!("rustc exited with {exit:?}"));
@@ -600,20 +626,182 @@ fn compile(
     }
 }
 
+struct DatabaseCompileResult {
+    published: blueprint_object::PublishedBlueprint,
+    output: String,
+    project: String,
+    revision: u64,
+}
+
+fn compile_database(
+    request: source_commands::CompileRequest,
+) -> Result<DatabaseCompileResult, String> {
+    let source_commands::CompileRequest {
+        source,
+        entry,
+        output,
+    } = request;
+    let revision = source.revision.revision;
+    let project = source.revision.project.clone();
+    let revision_i64 =
+        i64::try_from(revision).map_err(|_| String::from("database revision exceeds i64"))?;
+    let loader = source_loader::SourceFileLoader::new(
+        project.as_str(),
+        revision_i64,
+        source.files.into_iter().map(|file| (file.path, file.bytes)),
+    )?;
+    let entry_path = loader.entry_path(entry.as_deref())?;
+    let artifact = safe_artifact_name(project.as_str());
+    let crate_name = artifact.replace('-', "_");
+    let output = output.unwrap_or_else(|| format!("{LOCAL_COMPILE_DIR}/{artifact}.bp"));
+    if Path::new(output.as_str())
+        .extension()
+        .and_then(|value| value.to_str())
+        != Some("bp")
+    {
+        return Err(format!("Blueprint output must end in `.bp`: {output}"));
+    }
+    let compile_id = COMPILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+    let started = trueos::clock::monotonic_nanos();
+    let object = format!("rustc-build/{artifact}-r{revision}-{started:016x}-{compile_id:016x}.o");
+    let object_path = Path::new(object.as_str());
+    if let Some(parent) = object_path.parent() {
+        fs::create_dir_all(parent).map_err(|error| {
+            format!(
+                "create compiler object directory {}: {error}",
+                parent.display()
+            )
+        })?;
+    }
+
+    let args = compiler_args(
+        vec![
+            ARGV0.into(),
+            entry_path.to_string_lossy().into_owned(),
+            "--crate-name".into(),
+            crate_name,
+            "--edition=2024".into(),
+            "--crate-type".into(),
+            "lib".into(),
+            "--emit=obj".into(),
+            "-Cpanic=abort".into(),
+            "-Cdebuginfo=0".into(),
+            "-Copt-level=1".into(),
+            "-Ccodegen-units=1".into(),
+            "-Zno-parallel-backend".into(),
+            "-o".into(),
+            object.clone(),
+        ],
+        true,
+    )?;
+    println!(
+        "TRUEOS rustc min: database compile project={project} revision={revision} files={} source-bytes={} entry={} object={} output={output}",
+        loader.file_count(),
+        source.revision.source_bytes,
+        entry_path.display(),
+        object
+    );
+
+    let result = (|| {
+        let mut callbacks = CompilerCallbacks::database(loader);
+        let exit = rustc_driver_impl::catch_with_exit_code(|| {
+            rustc_driver_impl::run_compiler(&args, &mut callbacks)
+        });
+        if exit != ExitCode::SUCCESS {
+            return Err(format!("rustc exited with {exit:?}"));
+        }
+        blueprint_object::publish(object_path, Path::new(output.as_str()))
+    })();
+    let cleanup = match fs::remove_file(object_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(format!(
+            "remove transient compiler object {}: {error}",
+            object_path.display()
+        )),
+    };
+    let published = match (result, cleanup) {
+        (Ok(published), Ok(())) => published,
+        (Err(error), _) => return Err(error),
+        (Ok(_), Err(error)) => return Err(error),
+    };
+    Ok(DatabaseCompileResult {
+        published,
+        output,
+        project,
+        revision,
+    })
+}
+
+fn safe_artifact_name(project: &str) -> String {
+    let mut output = String::new();
+    for character in project.chars() {
+        let character = character.to_ascii_lowercase();
+        if character.is_ascii_alphanumeric() || matches!(character, '-' | '_') {
+            output.push(character);
+        } else if !output.ends_with('-') {
+            output.push('-');
+        }
+    }
+    let output = output.trim_matches('-');
+    if output.is_empty() {
+        String::from("app")
+    } else {
+        output.to_owned()
+    }
+}
+
 fn run(process_args: Vec<String>) -> bool {
     println!("TRUEOS rustc {TIER}: nightly-2026-07-10 af3d95584 workers={WORKERS}");
+    let runtime = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build TRUEOS Tokio runtime");
+
+    if source_commands::is_source_command(process_args.as_slice()) {
+        let outcome = runtime.block_on(source_commands::execute(process_args.as_slice()));
+        return match outcome {
+            Ok(source_commands::Outcome::Complete) => true,
+            Ok(source_commands::Outcome::Compile(request)) => {
+                let result = runtime.block_on(async move {
+                    tokio::task::spawn_blocking(move || compile_database(request))
+                        .await
+                        .map_err(|error| format!("compiler lane failed: {error}"))?
+                });
+                match result {
+                    Ok(compiled) => {
+                        println!(
+                            "TRUEOS rustc {TIER}: database Blueprint compile passed project={} revision={} path={} bytes={} object={} imports={}",
+                            compiled.project,
+                            compiled.revision,
+                            compiled.output,
+                            compiled.published.blueprint_bytes,
+                            compiled.published.object_bytes,
+                            compiled.published.imports.len()
+                        );
+                        true
+                    }
+                    Err(error) => {
+                        eprintln!("TRUEOS rustc {TIER}: {error}");
+                        false
+                    }
+                }
+            }
+            Err(error) => {
+                eprintln!("TRUEOS rustc {TIER}: {error}");
+                false
+            }
+        };
+    }
+
     let local_compile = process_args.len() == 1;
-    let args = match compiler_args(process_args) {
+    let args = match compiler_args(process_args, local_compile) {
         Ok(args) => args,
         Err(err) => {
             eprintln!("TRUEOS rustc {TIER}: {err}");
             return false;
         }
     };
-    let runtime = tokio::runtime::Builder::new_current_thread()
-        .enable_all()
-        .build()
-        .expect("build TRUEOS Tokio runtime");
     let result = runtime.block_on(async move {
         tokio::task::spawn_blocking(move || compile(args, local_compile))
             .await
@@ -644,6 +832,7 @@ fn run(process_args: Vec<String>) -> bool {
 }
 
 #[unsafe(no_mangle)]
+#[cfg(not(test))]
 pub extern "C" fn _start(argc: usize, argv: *const *const c_char) -> i32 {
     let process_args = match unsafe { capture_compiler_argv(argc, argv) } {
         Ok(args) => args,
@@ -653,4 +842,16 @@ pub extern "C" fn _start(argc: usize, argv: *const *const c_char) -> i32 {
         }
     };
     if run(process_args) { 0 } else { 1 }
+}
+
+// The host unit-test binary does not run under the Blueprint loader, so supply
+// only the two console/lifecycle imports retained by the test link.
+#[cfg(test)]
+#[unsafe(no_mangle)]
+extern "C" fn trueos_cabi_write(_stream: u32, _bytes: *const u8, _len: usize) {}
+
+#[cfg(test)]
+#[unsafe(no_mangle)]
+extern "C" fn trueos_cabi_blueprint_shutdown(_data: *const u8, _len: usize) -> i32 {
+    0
 }

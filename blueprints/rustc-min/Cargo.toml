@@ -11,6 +11,7 @@ rustc-payload-dependencies = ["trueos"]
 
 [dependencies]
 # This package intentionally targets the exact archived compiler source.
+base64 = { version = "0.22.1", default-features = false, features = ["alloc"] }
 rustc_ast = { path = "/home/t4ce/REPOS/TRUEOS-Rust-Toolchain-nightly-2026-07-10/lib/rustlib/rustc-src/rust/compiler/rustc_ast" }
 rustc_codegen_cranelift = { path = "/home/t4ce/REPOS/TRUEOS-Rust-Toolchain-nightly-2026-07-10/lib/rustlib/rustc-src/rust/compiler/rustc_codegen_cranelift" }
 rustc_driver_impl = { path = "/home/t4ce/REPOS/TRUEOS-Rust-Toolchain-nightly-2026-07-10/lib/rustlib/rustc-src/rust/compiler/rustc_driver_impl" }
@@ -19,6 +20,9 @@ rustc_middle = { path = "/home/t4ce/REPOS/TRUEOS-Rust-Toolchain-nightly-2026-07-
 rustc_session = { path = "/home/t4ce/REPOS/TRUEOS-Rust-Toolchain-nightly-2026-07-10/lib/rustlib/rustc-src/rust/compiler/rustc_session" }
 rustc_span = { path = "/home/t4ce/REPOS/TRUEOS-Rust-Toolchain-nightly-2026-07-10/lib/rustlib/rustc-src/rust/compiler/rustc_span" }
 object = { version = "0.39.1", default-features = false, features = ["elf", "read_core", "std"] }
+rusqlite_fork = { package = "rusqlite", git = "https://github.com/t4ce/rusqlite", rev = "c5a9ada73515cd860f490f8bdd59f83acf5d8e3f", default-features = false, features = ["bundled", "serialize"] }
+serde_json = { version = "1.0.142", default-features = false, features = ["std"] }
+sha2 = { version = "0.10.9", default-features = false, features = ["std"] }
 tokio = { version = "=1.52.3", default-features = false, features = ["rt", "sync", "time"] }
 trueos = { path = "/home/t4ce/REPOS/TRUEOS-Blueprints/api" }
 

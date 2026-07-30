@@ -27,6 +27,14 @@ pub(crate) fn lock<'a>() -> BacktraceLock<'a> {
 impl BacktraceLock<'_> {
     /// Prints the current backtrace.
     pub(crate) fn print(&mut self, w: &mut dyn Write, format: PrintFmt) -> io::Result<()> {
+        #[cfg(any(target_os = "trueos", target_os = "zkvm"))]
+        {
+            let _ = (w, format);
+            return Ok(());
+        }
+
+        #[cfg(not(any(target_os = "trueos", target_os = "zkvm")))]
+        {
         // There are issues currently linking libbacktrace into tests, and in
         // general during std's own unit tests we're not testing this path. In
         // test mode immediately return here to optimize away any references to the
@@ -45,6 +53,7 @@ impl BacktraceLock<'_> {
             }
         }
         write!(w, "{}", DisplayBacktrace { format })
+        }
     }
 }
 
