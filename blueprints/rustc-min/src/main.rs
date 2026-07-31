@@ -105,6 +105,12 @@ impl rustc_driver_impl::Callbacks for CompilerCallbacks {
         config.psess_created = Some(Box::new(|_| {
             println!("TRUEOS rustc min: compiler session created");
         }));
+        config.track_state = Some(Box::new(|_| {
+            println!("TRUEOS rustc min: compiler session state tracked");
+        }));
+        config.register_lints = Some(Box::new(|_, _| {
+            println!("TRUEOS rustc min: compiler lint store created");
+        }));
     }
 
     fn after_crate_root_parsing(
@@ -187,13 +193,6 @@ unsafe fn capture_compiler_argv(
 fn has_flag(args: &[String], flag: &str) -> bool {
     args.iter()
         .any(|arg| arg == flag || arg.starts_with(&format!("{flag}=")))
-}
-
-fn has_threads_option(args: &[String]) -> bool {
-    args.iter().any(|arg| arg.starts_with("-Zthreads="))
-        || args.windows(2).any(|pair| {
-            pair[0] == "-Z" && (pair[1] == "threads" || pair[1].starts_with("threads="))
-        })
 }
 
 fn extern_crate_name(value: &str) -> &str {
@@ -588,9 +587,6 @@ fn compiler_args(
     }
     if !has_flag(&args, "--sysroot") {
         args.extend(["--sysroot".into(), SYSROOT.into()]);
-    }
-    if !has_threads_option(&args) {
-        args.push(format!("-Zthreads={WORKERS}"));
     }
     if !has_flag(&args, "-Zunstable-options") {
         args.push("-Zunstable-options".into());

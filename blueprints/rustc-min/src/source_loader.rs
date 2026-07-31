@@ -84,7 +84,12 @@ impl SourceFileLoader {
 impl FileLoader for SourceFileLoader {
     fn file_exists(&self, path: &Path) -> bool {
         if is_virtual_path(path) {
-            self.files.contains_key(path)
+            let exists = self.files.contains_key(path);
+            println!(
+                "TRUEOS rustc min: database source exists path={} result={exists}",
+                path.display()
+            );
+            exists
         } else {
             self.real.file_exists(path)
         }
@@ -97,6 +102,11 @@ impl FileLoader for SourceFileLoader {
             }
             return self.real.read_file(path);
         };
+        println!(
+            "TRUEOS rustc min: database source read path={} bytes={}",
+            path.display(),
+            bytes.len()
+        );
         String::from_utf8(bytes.to_vec()).map_err(|error| {
             io::Error::new(
                 io::ErrorKind::InvalidData,

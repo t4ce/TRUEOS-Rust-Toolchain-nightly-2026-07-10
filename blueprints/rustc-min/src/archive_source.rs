@@ -1,3 +1,4 @@
+use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -6,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use crate::source_db::{LoadedSource, SourceFileInput};
 
 const STAGING_ROOT: &str = "rustc-source-staging";
+const TRUEOSFS_DIRECTORY_MARKER: &str = ".keep";
 const MAX_SOURCE_FILES: usize = 4096;
 const MAX_SOURCE_FILE_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_SOURCE_BYTES: u64 = 256 * 1024 * 1024;
@@ -24,10 +26,16 @@ pub async fn read_archive(path: &str) -> Result<Vec<SourceFileInput>, String> {
             .map_err(|code| format!("unpack {path}: archive error {code}"))?;
         let files = collect_files(staging.as_path())?;
         if files.len() as u32 != report.file_count {
+            let paths = files
+                .iter()
+                .map(|file| file.path.as_str())
+                .collect::<Vec<_>>()
+                .join(",");
             return Err(format!(
-                "archive report declared {} files but staging contains {}",
+                "archive report declared {} files but staging contains {} paths={}",
                 report.file_count,
-                files.len()
+                files.len(),
+                paths
             ));
         }
         Ok(files)
@@ -124,6 +132,14 @@ fn collect_files(root: &Path) -> Result<Vec<SourceFileInput>, String> {
             let file_type = entry.file_type().map_err(|error| {
                 io_error("inspect staging entry", entry.path().as_path(), error)
             })?;
+            // TRUEOSFS represents directories with reserved, empty `.keep`
+            // records. The kernel archive worker creates these records while
+            // materializing the staging tree; they are filesystem metadata,
+            // not members of the source archive. The archive packer applies
+            // the same reservation when walking a TRUEOSFS directory.
+            if file_type.is_file() && is_trueosfs_directory_marker(entry.file_name().as_os_str()) {
+                continue;
+            }
             if file_type.is_dir() {
                 pending.push(entry.path());
                 continue;
@@ -174,6 +190,10 @@ fn collect_files(root: &Path) -> Result<Vec<SourceFileInput>, String> {
     Ok(files)
 }
 
+fn is_trueosfs_directory_marker(name: &OsStr) -> bool {
+    name == OsStr::new(TRUEOSFS_DIRECTORY_MARKER)
+}
+
 fn safe_staging_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
     if relative.is_empty()
         || relative.starts_with('/')
@@ -194,7 +214,8 @@ fn io_error(operation: &str, path: &Path, error: io::Error) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_staging_path, safe_staging_path};
+    use super::{is_staging_path, is_trueosfs_directory_marker, safe_staging_path};
+    use std::ffi::OsStr;
     use std::path::Path;
 
     #[test]
@@ -216,5 +237,12 @@ mod tests {
         assert!(is_staging_path(staging));
         assert!(!is_staging_path(Path::new("rustc-source-staging")));
         assert!(!is_staging_path(Path::new("other/export-1234")));
+    }
+
+    #[test]
+    fn trueosfs_directory_markers_are_not_source_files() {
+        assert!(is_trueosfs_directory_marker(OsStr::new(".keep")));
+        assert!(!is_trueosfs_directory_marker(OsStr::new(".gitkeep")));
+        assert!(!is_trueosfs_directory_marker(OsStr::new("keep")));
     }
 }
